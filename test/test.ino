@@ -28,7 +28,6 @@
 
 
 
-
 #include <Arduino.h>    // all this is arduino for an esp32    so compared to c some delacrations are missing but im not sure 
 #include <Preferences.h>
 #include <HTTPClient.h>
@@ -47,6 +46,8 @@
 //#include <Adafruit_NeoPixel.h>    //  https://github.com/adafruit/Adafruit_NeoPixel.git
 
 
+#include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
+#include <xpwallpaper.h>  //  test image bitmap
 
 
 TaskHandle_t ledTasHandle;
@@ -85,7 +86,7 @@ void ledTas(void *parameter) {    //  this handles led user feedback
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
 Preferences prefs;    //  first declaration of preferences as perfs
 void feedlog(String text, int r = 0, int g = 0, int b = 0, int t = 0, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
-  if (r != 0 || g != 0 || b != 0 || t != 0) { struct ledfeedback{ int r; int g; int b; int t; }; ledfeedback ledc = {r, g, b, t}; xQueueSend(ledQueue, &ledc, 0); }    //  send led color to queue
+  if (r != 0 || g != 0 || b != 0 || t != 0) { struct ledfeedback{ int r; int g; int b; int t; }; } // no led feedback! for now ledfeedback ledc = {r, g, b, t}; xQueueSend(ledQueue, &ledc, 0); }    //  send led color to queue
   if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
     Serial.print(text);
     WebSerial.print(text.c_str()); 
@@ -98,13 +99,13 @@ TaskHandle_t servoTasHandle;
 QueueHandle_t servoQueue;    //  handle for servo queue
 void servoTas(void *parameter) {    //  this handles servo movement
   servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
-  ledcAttach(A0, 50, 12);    //  50hz pwm at pin A0 with 12 bit resolution so 0-4095
+  ledcAttach(18, 50, 12);    //  50hz pwm at pin 18 with 12 bit resolution so 0-4095
   char buf[] = "sit";    //  why does char buf[4] error help
   
   while(true){
     if(!xQueueIsQueueEmptyFromISR( servoQueue )){
       xQueueReceive(servoQueue, &buf, 0);    //  just do sth when queue not empty
-      ledcWrite(A0, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(A0, prefs.getInt("top", 0)) : ledcWrite(A0, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(A0, 0);    //  move servo to poses in preferences also cool c ternary operator
+      ledcWrite(18, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(18, prefs.getInt("top", 0)) : ledcWrite(18, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(18, 0);    //  move servo to poses in preferences also cool c ternary operator
     }
     vTaskDelay(1);
   }
@@ -306,13 +307,13 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 }
 
 
-InterruptButton belowus(A1, LOW);    //  why does this not work inside initflanks
+InterruptButton belowus(17, LOW);    //  why does this not work inside initflanks
 void initflanks() {
   belowus.bind(Event_KeyDown, [](){ 
-    xQueueSend(servoQueue, "sit", 0); xQueueSend(sendmqttQueue, "look here", 0);  feedlog("pressed so sending look here \n", 0, 75, 0, 0, "debug"); 
+    xQueueSend(servoQueue, "sit", 0); xQueueSend(sendmqttQueue, "look here", 0);  // feedlog("pressed so sending look here \n", 0, 75, 0, 0, "debug"); this in debug causes crash perhaps too much stack for isr
     String peers = prefs.getString("peers", "none");
     int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
-  });    //  why this cause crash some times
+  });
 }
 
 
@@ -327,6 +328,48 @@ void setup() {
   xTaskCreate( servoTas, "servoTas", 2048, NULL, 1, &servoTasHandle );    //  now spawn async tasks
   initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
   initmqtt(); feedlog("init done", 0, 75, 0, 300, "debug"); feedlog(".", 50, 50, 50, 200, "debug"); feedlog(".", 0, 75, 0, 500, "debug");   //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
+
+
+  
+  // Print PSRAM info
+  Serial.printf("PSRAM: %s\n", psramFound() ? "Found" : "Not found");
+  if (psramFound()) {
+    Serial.printf("Total PSRAM: %d bytes\n", ESP.getPsramSize());
+    Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
+  }
+  
+  // init epd and draw test image
+  GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
+
+  pinMode(7, OUTPUT);
+  digitalWrite(7, HIGH); // enable power to the panel
+
+  display.init(115200);
+
+  display.setRotation(0);
+  
+
+  // Copy bitmap from PROGMEM to PSRAM for faster access
+  size_t bitmapSize = (display.width() * display.height()) / 8;
+  uint8_t* pBitmap = (uint8_t*)ps_malloc(bitmapSize);
+  
+  if (pBitmap) {
+    memcpy_P(pBitmap, epd_bitmap_xpwallp, bitmapSize);
+    
+    display.setFullWindow();
+    display.firstPage();
+    do {
+      display.fillScreen(GxEPD_BLACK);
+      display.drawBitmap(0, 0, pBitmap, display.width(), display.height(), GxEPD_WHITE);
+    } while (display.nextPage());
+    
+    free(pBitmap);
+  }
+
+  display.hibernate();
+
+
+
 }
 
 

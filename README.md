@@ -46,6 +46,8 @@ arduino-cli board search ESP32S3 Dev Module
 compile with
 ```
 arduino-cli compile -v --fqbn esp32:esp32:esp32s3 --build-path ./firmware
+
+arduino-cli compile --fqbn esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
 ```
 
 'merged.bin' at adress 0x0 with https://espressif.github.io/esptool-js/ for web programming
