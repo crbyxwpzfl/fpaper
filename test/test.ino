@@ -48,7 +48,9 @@
 
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
+GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
 
+//testesteset
 
 TaskHandle_t ledTasHandle;
 QueueHandle_t ledQueue, ackQueue;
@@ -330,7 +332,7 @@ void setup() {
   initmqtt(); feedlog("init done", 0, 75, 0, 300, "debug"); feedlog(".", 50, 50, 50, 200, "debug"); feedlog(".", 0, 75, 0, 500, "debug");   //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
 
 
-  
+
   // Print PSRAM info
   Serial.printf("PSRAM: %s\n", psramFound() ? "Found" : "Not found");
   if (psramFound()) {
@@ -339,8 +341,7 @@ void setup() {
   }
   
   // init epd and draw test image
-  GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
-
+ 
   pinMode(7, OUTPUT);
   digitalWrite(7, HIGH); // enable power to the panel
 

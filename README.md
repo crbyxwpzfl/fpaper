@@ -1,11 +1,24 @@
 # fpaper
 
 
-TODO 
-how to set partition sheme what is huge app required for
-what is/does psram OPIPsram what is it required for
-what is/does Flash size 8MB(64Mb) how to use this with web flasher
-
+TODO - currently we use PartitionScheme min_spiffs form arduino default partitions
+```
+Label	    Offset	   Size (hex)	Size (bytes)	Size (KB)	Size (MB)
+nvs	        0x009000	0x005000	20,480	        20.0	    0.0195
+otadata	    0x00E000	0x002000	8,192	        8.0	        0.0078
+app0	    0x010000	0x1E0000	1,966,080	    1,920.0	    1.875
+app1	    0x1F0000	0x1E0000	1,966,080	    1,920.0   	1.875
+spiffs	    0x3D0000	0x020000	131,072	128.0	0.125
+coredump	0x3F0000	0x010000	65,536	64.0	0.0625
+```
+but ESP32-S3-WROOM-1-N8R8 has more to offer with custom partitions perhaps
+```
+Region	        Start	    End	        Size (bytes)	Size (MB)
+Bootloader	    0x0000	    0x8000	    32,768	        0.03125
+Partition Table	0x8000	    0x9000	    4,096	        0.0039
+All partitions	0x9000	    0x400000	4,142,848	    ~3.95
+Unused	        0x400000	0x800000	4,194,304	    4.0
+```
 
 install arduino cli
 ```
@@ -45,9 +58,7 @@ arduino-cli board search ESP32S3 Dev Module
 
 compile with
 ```
-arduino-cli compile -v --fqbn esp32:esp32:esp32s3 --build-path ./firmware
-
-arduino-cli compile --fqbn esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
+arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
 ```
 
 'merged.bin' at adress 0x0 with https://espressif.github.io/esptool-js/ for web programming
