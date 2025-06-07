@@ -3,13 +3,13 @@
 
 TODO - currently we use PartitionScheme min_spiffs form arduino default partitions
 ```
-Label	    Offset     Size (hex)   Size (bytes)    Size (KB)   Size (MB)
-nvs	        0x009000   0x005000     20,480	        20.0        0.0195
-otadata	    0x00E000   0x002000     8,192	        8.0	        0.0078
-app0	    0x010000   0x1E0000     1,966,080	    1,920.0     1.875
-app1	    0x1F0000   0x1E0000     1,966,080	    1,920.0     1.875
-spiffs	    0x3D0000   0x020000     131,072	128.0   0.125
-coredump	0x3F0000   0x010000     65,536	64.0    0.0625
+Label       Offset     Size (hex)   Size (bytes)    Size (KB)   Size (MB)
+nvs         0x009000   0x005000     20,480          20.0        0.0195
+otadata     0x00E000   0x002000     8,192           8.0	        0.0078
+app0        0x010000   0x1E0000     1,966,080       1,920.0     1.875
+app1        0x1F0000   0x1E0000     1,966,080       1,920.0     1.875
+spiffs      0x3D0000   0x020000     131,072	128.0   0.125
+coredump    0x3F0000   0x010000     65,536	64.0    0.0625
 ```
 but ESP32-S3-WROOM-1-N8R8 has more to offer with custom partitions perhaps
 ```
