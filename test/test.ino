@@ -101,13 +101,15 @@ TaskHandle_t servoTasHandle;
 QueueHandle_t servoQueue;    //  handle for servo queue
 void servoTas(void *parameter) {    //  this handles servo movement
   servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
-  ledcAttach(18, 50, 12);    //  50hz pwm at pin 18 with 12 bit resolution so 0-4095
+  ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
   char buf[] = "sit";    //  why does char buf[4] error help
   
   while(true){
     if(!xQueueIsQueueEmptyFromISR( servoQueue )){
       xQueueReceive(servoQueue, &buf, 0);    //  just do sth when queue not empty
-      ledcWrite(18, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(18, prefs.getInt("top", 0)) : ledcWrite(18, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(18, 0);    //  move servo to poses in preferences also cool c ternary operator
+      //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
+      if (String(buf) == "top") { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
+      if (String(buf) == "sit") { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose 
     }
     vTaskDelay(1);
   }
@@ -296,7 +298,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
   }
 
-
+  
   WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });
   //WebSerial.onMessage([](const String& msg) { recv(msg); });    //  attach message callback
   WebSerial.begin(&server);    //  init webserial
@@ -309,7 +311,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 }
 
 
-InterruptButton belowus(17, LOW);    //  why does this not work inside initflanks
+InterruptButton belowus(20, LOW);    //  why does this not work inside initflanks
 void initflanks() {
   belowus.bind(Event_KeyDown, [](){ 
     xQueueSend(servoQueue, "sit", 0); xQueueSend(sendmqttQueue, "look here", 0);  // feedlog("pressed so sending look here \n", 0, 75, 0, 0, "debug"); this in debug causes crash perhaps too much stack for isr
