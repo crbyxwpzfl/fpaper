@@ -18,6 +18,11 @@ uint8_t ImageBW[15000];
 #define txt_size 3808
 #define pre_size 4576
 
+
+
+
+
+
 // Clear all content on the display
 void clear_all()
 {

@@ -50,7 +50,82 @@
 #include <xpwallpaper.h>  //  test image bitmap
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
 
-//testesteset
+
+
+//NEW
+#define IMAGE_WIDTH 400
+#define IMAGE_HEIGHT 300
+#define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
+
+  String HTML_UPLOAD = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload Image</title>
+</head>
+<body>
+  <h1>Upload Image</h1>
+  <form method="POST" action="/upload" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".bmp,.bin">
+    <br><br>
+    <input type="submit" value="Upload">
+  </form>
+</body>
+</html>
+)rawliteral";
+
+uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
+size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
+
+void handleImageUpload(AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+  if (index == 0) {
+    // Allocate memory for the image buffer on the first chunk
+    if (imageBuffer) {
+      free(imageBuffer); // Free any previously allocated buffer
+    }
+    imageBuffer = (uint8_t*)ps_malloc(IMAGE_SIZE);
+    imageBufferOffset = 0;
+
+    if (!imageBuffer) {
+      Serial.println("Failed to allocate memory for image buffer");
+      request->send(500, "text/plain", "Failed to allocate memory for image buffer");
+      return;
+    }
+
+    Serial.printf("Upload started: %s\n", filename.c_str());
+  }
+
+  // Copy the received data into the buffer
+  if (imageBuffer && imageBufferOffset + len <= IMAGE_SIZE) {
+    memcpy(imageBuffer + imageBufferOffset, data, len);
+    imageBufferOffset += len;
+  } else {
+    Serial.println("Image buffer overflow");
+    request->send(500, "text/plain", "Image buffer overflow");
+    return;
+  }
+
+  if (final) {
+    // Upload complete
+    Serial.printf("Upload complete: %s, %zu bytes received\n", filename.c_str(), imageBufferOffset);
+    request->send(200, "text/plain", "Image upload complete");
+
+    // Display the image on the e-paper display
+    display.setFullWindow();
+    display.firstPage();
+    do {
+      display.fillScreen(GxEPD_WHITE);
+      display.drawBitmap(0, 0, imageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_BLACK);
+    } while (display.nextPage());
+
+    display.hibernate();
+    Serial.println("Image displayed on e-paper");
+  }
+}
+//END
+
+
+
 
 TaskHandle_t ledTasHandle;
 QueueHandle_t ledQueue, ackQueue;
@@ -303,6 +378,23 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   //WebSerial.onMessage([](const String& msg) { recv(msg); });    //  attach message callback
   WebSerial.begin(&server);    //  init webserial
 
+
+  //NEW
+  // Serve the HTML form for /upload
+  server.on("/upload", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/html", HTML_UPLOAD);
+  });
+
+  // Add the image upload endpoint
+  server.on(
+    "/upload", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},
+    handleImageUpload
+  );
+  //END
+
+
+
   server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
@@ -342,6 +434,18 @@ void setup() {
     Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
   }
   
+  
+
+  //NEW
+  if (imageBuffer) {
+    free(imageBuffer);
+    imageBuffer = nullptr;
+  }
+  //END
+
+
+
+
   // init epd and draw test image
  
   pinMode(7, OUTPUT);
