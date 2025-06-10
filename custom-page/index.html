@@ -59,11 +59,13 @@
       blah.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
     }
 
-    // Drag to move
+    // Drag to move (desktop)
     blah.addEventListener('mousedown', e => {
+      e.preventDefault();
       dragging = true;
       startX = e.clientX - posX;
       startY = e.clientY - posY;
+      document.body.style.userSelect = 'none';
       blah.style.cursor = 'grabbing';
     });
     document.addEventListener('mousemove', e => {
@@ -72,9 +74,12 @@
       posY = e.clientY - startY;
       updateTransform();
     });
-    document.addEventListener('mouseup', () => {
-      dragging = false;
-      blah.style.cursor = 'grab';
+    document.addEventListener('mouseup', e => {
+      if (dragging) {
+        dragging = false;
+        document.body.style.userSelect = '';
+        blah.style.cursor = 'grab';
+      }
     });
 
     // Touch support (pan and pinch)
