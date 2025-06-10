@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fixed Photo Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .upload-section {
+            text-align: center;
+            padding: 40px;
+            border: 2px dashed #007cba;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+        .upload-btn {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .upload-btn:hover {
+            background: #005a8b;
+        }
+        .display-section {
+            text-align: center;
+        }
+        .photo-frame {
+            background: #f9f9f9;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .photo-frame img {
+            max-width: 100%;
+            max-height: 600px;
+            border-radius: 5px;
+        }
+        .clear-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📸 Photo Upload & Display</h1>
+        
+        <div class="upload-section" id="uploadSection">
+            <h2>Upload Your Photo</h2>
+            <p>Choose an image file to display</p>
+            <input type="file" id="fileInput" accept="image/*" style="display: none;">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose File
+            </button>
+        </div>
+
+        <div class="display-section hidden" id="displaySection">
+            <div class="photo-frame">
+                <img id="uploadedImage" alt="Uploaded photo">
+            </div>
+            <div>
+                <h3 id="fileName">File Name</h3>
+                <p id="fileSize">File Size</p>
+                <button class="clear-btn" onclick="clearPhoto()">Upload Another Photo</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadSection = document.getElementById('uploadSection');
+        const displaySection = document.getElementById('displaySection');
+        const uploadedImage = document.getElementById('uploadedImage');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file && file.type.startsWith('image/')) {
+                displayPhoto(file);
+            } else if (file) {
+                alert('Please select a valid image file.');
+            }
+        });
+
+        function displayPhoto(file) {
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                // Set image source
+                uploadedImage.src = e.target.result;
+                
+                // Set file info
+                fileName.textContent = file.name;
+                fileSize.textContent = formatFileSize(file.size);
+                
+                // Show display section, hide upload section
+                uploadSection.classList.add('hidden');
+                displaySection.classList.remove('hidden');
+            };
+            
+            reader.readAsDataURL(file);
+        }
+
+        function clearPhoto() {
+            fileInput.value = '';
+            uploadedImage.src = '';
+            uploadSection.classList.remove('hidden');
+            displaySection.classList.add('hidden');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
