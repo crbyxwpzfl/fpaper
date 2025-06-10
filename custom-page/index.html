@@ -1,150 +1,205 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Image Preview</title>
-  <style>
-    body { font-family: sans-serif; margin: 2em; }
-    .image-box {
-      width: 400px;
-      aspect-ratio: 4 / 3;
-      background: #f0f0f0;
-      border: 1px solid #ccc;
-      position: relative;
-      overflow: hidden;
-      margin-top: 1em;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .image-box img {
-      position: absolute;
-      top: 0; left: 0;
-      cursor: grab;
-      user-select: none;
-      will-change: transform;
-      max-width: none;
-      max-height: none;
-      min-width: 100px;
-      min-height: 75px;
-      transition: box-shadow 0.2s;
-    }
-    input[type='file'] { margin-top: 1em; }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+* {box-sizing: border-box;}
+
+.img-region-container {
+  position: relative;
+  display: inline-block;
+}
+#blah {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+#region {
+  position: absolute;
+  cursor: move;
+  box-sizing: border-box;
+  display: none;
+  touch-action: none; /* Prevent browser gestures on region */
+}
+</style>
+<script src="../original-page/js/dithering.js"></script>
 </head>
 <body>
-  <form>
-    <input accept="image/*" type="file" id="imgInp" />
-  </form>
-  <div class="image-box" id="imgBox">
-    <img id="blah" src="#" alt="your image" style="display:none;" />
-  </div>
-  <script>
-    const imgInp = document.getElementById('imgInp');
-    const blah = document.getElementById('blah');
-    const imgBox = document.getElementById('imgBox');
-    let scale = 1, posX = 0, posY = 0, startX, startY, dragging = false;
 
-    imgInp.onchange = evt => {
-      const [file] = imgInp.files;
-      if (file) {
-        blah.src = URL.createObjectURL(file);
-        blah.style.display = 'block';
-        scale = 1; posX = 0; posY = 0;
-        updateTransform();
-      }
+<h1>Image Region Selector (4:3 Aspect Ratio)</h1>
+<p>Upload an image and select a 4:3 region by dragging and resizing the rectangle:</p>
+<form runat="server" style="margin-bottom: 1em;">
+  <input accept="image/*" type='file' id="imgInp" />
+</form>
+<div class="img-region-container">
+  <img id="blah" src="#" alt="your image" style="max-width:100%; display:none;" />
+  <canvas id="ditheredOverlay" width="400" height="300" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas>
+  <div id="region" style="display:none;"></div>
+</div>
+
+<script>
+const imgInp = document.getElementById('imgInp');
+const blah = document.getElementById('blah');
+const region = document.getElementById('region');
+const ditheredOverlay = document.getElementById('ditheredOverlay');
+let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
+let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
+let imgRect = null;
+
+function updateRegion() {
+  if (!imgRect) return;
+  region.style.left = regionData.left + 'px';
+  region.style.top = regionData.top + 'px';
+  region.style.width = regionData.width + 'px';
+  region.style.height = regionData.height + 'px';
+  // Position dithered overlay
+  ditheredOverlay.style.left = regionData.left + 'px';
+  ditheredOverlay.style.top = regionData.top + 'px';
+  ditheredOverlay.width = 400;
+  ditheredOverlay.height = 300;
+  ditheredOverlay.style.width = regionData.width + 'px';
+  ditheredOverlay.style.height = regionData.height + 'px';
+  ditheredOverlay.style.display = 'block';
+  // Draw dithered region
+  if (blah.src && blah.complete && regionData.width > 0 && regionData.height > 0) {
+    // Map regionData (displayed image) to natural image coordinates
+    const scaleX = blah.naturalWidth / blah.width;
+    const scaleY = blah.naturalHeight / blah.height;
+    const sx = regionData.left * scaleX;
+    const sy = regionData.top * scaleY;
+    const sw = regionData.width * scaleX;
+    const sh = regionData.height * scaleY;
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 400;
+    tempCanvas.height = 300;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(
+      blah,
+      sx, sy, sw, sh,
+      0, 0, 400, 300
+    );
+    dithering(tempCtx, 400, 300, 128, 3); // 3 = Atkinson
+    const overlayCtx = ditheredOverlay.getContext('2d');
+    overlayCtx.clearRect(0, 0, 400, 300);
+    overlayCtx.drawImage(tempCanvas, 0, 0, 400, 300);
+  }
+}
+
+imgInp.onchange = evt => {
+  const [file] = imgInp.files;
+  if (file) {
+    blah.src = URL.createObjectURL(file);
+    blah.style.display = 'block';
+    blah.onload = () => {
+      imgRect = blah.getBoundingClientRect();
+      // Set region to center, 50% of image width, 4:3
+      const iw = blah.width, ih = blah.height;
+      let rw = iw * 0.5, rh = rw * 3/4;
+      if (rh > ih) { rh = ih * 0.5; rw = rh * 4/3; }
+      regionData = {
+        left: (iw - rw) / 2,
+        top: (ih - rh) / 2,
+        width: rw,
+        height: rh
+      };
+      region.style.display = 'block';
+      ditheredOverlay.style.display = 'block';
+      updateRegion();
     };
+  }
+};
 
-    function updateTransform() {
-      blah.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
-    }
+region.addEventListener('mousedown', function(e) {
+  dragging = true;
+  startX = e.clientX;
+  startY = e.clientY;
+  startLeft = regionData.left;
+  startTop = regionData.top;
+  document.body.style.userSelect = 'none';
+});
+document.addEventListener('mousemove', function(e) {
+  if (dragging) {
+    let dx = e.clientX - startX;
+    let dy = e.clientY - startY;
+    let newLeft = Math.max(0, Math.min(blah.width - regionData.width, startLeft + dx));
+    let newTop = Math.max(0, Math.min(blah.height - regionData.height, startTop + dy));
+    regionData.left = newLeft;
+    regionData.top = newTop;
+    updateRegion();
+  }
+});
+document.addEventListener('mouseup', function() {
+  dragging = false;
+  document.body.style.userSelect = '';
+});
 
-    // Drag to move (desktop)
-    blah.addEventListener('mousedown', e => {
-      e.preventDefault();
-      dragging = true;
-      startX = e.clientX - posX;
-      startY = e.clientY - posY;
-      document.body.style.userSelect = 'none';
-      blah.style.cursor = 'grabbing';
-    });
-    document.addEventListener('mousemove', e => {
-      if (!dragging) return;
-      posX = e.clientX - startX;
-      posY = e.clientY - startY;
-      updateTransform();
-    });
-    document.addEventListener('mouseup', e => {
-      if (dragging) {
-        dragging = false;
-        document.body.style.userSelect = '';
-        blah.style.cursor = 'grab';
-      }
-    });
+// Resize with mouse wheel (ctrl+wheel for finer control)
+region.addEventListener('wheel', function(e) {
+  e.preventDefault();
+  let scale = e.deltaY < 0 ? 1.05 : 0.95;
+  if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
+  let newWidth = regionData.width * scale;
+  let newHeight = newWidth * 3/4;
+  // Clamp to image bounds
+  if (newWidth < 40 || newHeight < 30) return;
+  if (regionData.left + newWidth > blah.width) newWidth = blah.width - regionData.left, newHeight = newWidth * 3/4;
+  if (regionData.top + newHeight > blah.height) newHeight = blah.height - regionData.top, newWidth = newHeight * 4/3;
+  regionData.width = newWidth;
+  regionData.height = newHeight;
+  updateRegion();
+});
 
-    // Touch support (pan and pinch)
-    let lastTouchDist = null;
-    let lastTouchCenter = null;
-
-    blah.addEventListener('touchstart', e => {
-      if (e.touches.length === 1) {
-        dragging = true;
-        startX = e.touches[0].clientX - posX;
-        startY = e.touches[0].clientY - posY;
-      } else if (e.touches.length === 2) {
-        dragging = false;
-        lastTouchDist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        lastTouchCenter = {
-          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
-          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
-        };
-      }
-    }, { passive: false });
-
-    document.addEventListener('touchmove', e => {
-      if (dragging && e.touches.length === 1) {
-        posX = e.touches[0].clientX - startX;
-        posY = e.touches[0].clientY - startY;
-        updateTransform();
-        e.preventDefault(); // Prevent page scroll while panning
-      } else if (e.touches.length === 2 && lastTouchDist !== null) {
-        const dist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        const center = {
-          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
-          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
-        };
-        // Zoom relative to the center of the pinch
-        const scaleChange = dist / lastTouchDist;
-        scale = Math.max(0.1, scale * scaleChange);
-        // Optionally, adjust posX/posY to zoom towards pinch center
-        lastTouchDist = dist;
-        lastTouchCenter = center;
-        updateTransform();
-        e.preventDefault(); // Prevent page scroll while pinching
-      }
-    }, { passive: false });
-
-    document.addEventListener('touchend', e => {
-      if (e.touches.length === 0) {
-        dragging = false;
-        lastTouchDist = null;
-        lastTouchCenter = null;
-      }
-    });
-
-    // Zoom with mouse wheel
-    imgBox.addEventListener('wheel', e => {
-      e.preventDefault();
-      const delta = e.deltaY < 0 ? 0.1 : -0.1;
-      scale = Math.max(0.1, scale + delta);
-      updateTransform();
-    });
-  </script>
+// Touch events for drag and pinch
+let lastTouchDist = null;
+region.addEventListener('touchstart', function(e) {
+  e.preventDefault(); // Prevent page scroll
+  if (e.touches.length === 1) {
+    dragging = true;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    startLeft = regionData.left;
+    startTop = regionData.top;
+  } else if (e.touches.length === 2) {
+    resizing = true;
+    lastTouchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    startWidth = regionData.width;
+    startHeight = regionData.height;
+  }
+}, { passive: false });
+region.addEventListener('touchmove', function(e) {
+  e.preventDefault(); // Prevent page scroll
+  if (dragging && e.touches.length === 1) {
+    let dx = e.touches[0].clientX - startX;
+    let dy = e.touches[0].clientY - startY;
+    let newLeft = Math.max(0, Math.min(blah.width - regionData.width, startLeft + dx));
+    let newTop = Math.max(0, Math.min(blah.height - regionData.height, startTop + dy));
+    regionData.left = newLeft;
+    regionData.top = newTop;
+    updateRegion();
+  } else if (resizing && e.touches.length === 2) {
+    let dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    let scale = dist / lastTouchDist;
+    let newWidth = startWidth * scale;
+    let newHeight = newWidth * 3/4;
+    if (newWidth < 40 || newHeight < 30) return;
+    if (regionData.left + newWidth > blah.width) newWidth = blah.width - regionData.left, newHeight = newWidth * 3/4;
+    if (regionData.top + newHeight > blah.height) newHeight = blah.height - regionData.top, newWidth = newHeight * 4/3;
+    regionData.width = newWidth;
+    regionData.height = newHeight;
+    updateRegion();
+  }
+}, { passive: false });
+region.addEventListener('touchend', function(e) {
+  dragging = false;
+  resizing = false;
+  e.preventDefault();
+}, { passive: false });
+</script>
 </body>
 </html>
