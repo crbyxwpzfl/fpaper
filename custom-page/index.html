@@ -37,12 +37,14 @@
   <canvas id="ditheredOverlay" width="400" height="300" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas>
   <div id="region" style="display:none;"></div>
 </div>
+<button id="downloadBtn" style="margin-top:1em; display:none;">Download Dithered 400x300 Binary</button>
 
 <script>
 const imgInp = document.getElementById('imgInp');
 const blah = document.getElementById('blah');
 const region = document.getElementById('region');
 const ditheredOverlay = document.getElementById('ditheredOverlay');
+const downloadBtn = document.getElementById('downloadBtn');
 let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
 let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
 let imgRect = null;
@@ -83,6 +85,10 @@ function updateRegion() {
     const overlayCtx = ditheredOverlay.getContext('2d');
     overlayCtx.clearRect(0, 0, 400, 300);
     overlayCtx.drawImage(tempCanvas, 0, 0, 400, 300);
+    // Show download button when dithered overlay is ready
+    downloadBtn.style.display = 'inline-block';
+  } else {
+    downloadBtn.style.display = 'none';
   }
 }
 
@@ -201,6 +207,45 @@ region.addEventListener('touchend', function(e) {
   resizing = false;
   e.preventDefault();
 }, { passive: false });
+
+downloadBtn.addEventListener('click', function() {
+  // Get dithered 400x300 image from overlay
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = 400;
+  tempCanvas.height = 300;
+  const tempCtx = tempCanvas.getContext('2d');
+  // Map regionData (displayed image) to natural image coordinates
+  const scaleX = blah.naturalWidth / blah.width;
+  const scaleY = blah.naturalHeight / blah.height;
+  const sx = regionData.left * scaleX;
+  const sy = regionData.top * scaleY;
+  const sw = regionData.width * scaleX;
+  const sh = regionData.height * scaleY;
+  tempCtx.save();
+  tempCtx.translate(200, 150);
+  if (typeof rotation !== 'undefined') tempCtx.rotate(rotation);
+  tempCtx.drawImage(
+    blah,
+    sx, sy, sw, sh,
+    -200, -150, 400, 300
+  );
+  tempCtx.restore();
+  dithering(tempCtx, 400, 300, 128, 3); // Atkinson
+  // Convert to binary using canvas2bytes from dithering.js
+  const bytes = canvas2bytes(tempCanvas, 'bw');
+  const byteArray = new Uint8Array(bytes);
+  const blob = new Blob([byteArray], {type: 'application/octet-stream'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'dithered_400x300.bin';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
+});
 </script>
 </body>
 </html>
