@@ -5,25 +5,141 @@
   <title>Image Preview</title>
   <style>
     body { font-family: sans-serif; margin: 2em; }
-    img { max-width: 300px; max-height: 300px; display: block; margin-top: 1em; }
+    .image-box {
+      width: 400px;
+      aspect-ratio: 4 / 3;
+      background: #f0f0f0;
+      border: 1px solid #ccc;
+      position: relative;
+      overflow: hidden;
+      margin-top: 1em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .image-box img {
+      position: absolute;
+      top: 0; left: 0;
+      cursor: grab;
+      user-select: none;
+      will-change: transform;
+      max-width: none;
+      max-height: none;
+      min-width: 100px;
+      min-height: 75px;
+      transition: box-shadow 0.2s;
+    }
     input[type='file'] { margin-top: 1em; }
   </style>
 </head>
 <body>
   <form>
     <input accept="image/*" type="file" id="imgInp" />
-    <img id="blah" src="#" alt="your image" style="display:none;" />
   </form>
+  <div class="image-box" id="imgBox">
+    <img id="blah" src="#" alt="your image" style="display:none;" />
+  </div>
   <script>
     const imgInp = document.getElementById('imgInp');
     const blah = document.getElementById('blah');
+    const imgBox = document.getElementById('imgBox');
+    let scale = 1, posX = 0, posY = 0, startX, startY, dragging = false;
+
     imgInp.onchange = evt => {
       const [file] = imgInp.files;
       if (file) {
         blah.src = URL.createObjectURL(file);
         blah.style.display = 'block';
+        scale = 1; posX = 0; posY = 0;
+        updateTransform();
       }
+    };
+
+    function updateTransform() {
+      blah.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
     }
+
+    // Drag to move
+    blah.addEventListener('mousedown', e => {
+      dragging = true;
+      startX = e.clientX - posX;
+      startY = e.clientY - posY;
+      blah.style.cursor = 'grabbing';
+    });
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      posX = e.clientX - startX;
+      posY = e.clientY - startY;
+      updateTransform();
+    });
+    document.addEventListener('mouseup', () => {
+      dragging = false;
+      blah.style.cursor = 'grab';
+    });
+
+    // Touch support (pan and pinch)
+    let lastTouchDist = null;
+    let lastTouchCenter = null;
+
+    blah.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) {
+        dragging = true;
+        startX = e.touches[0].clientX - posX;
+        startY = e.touches[0].clientY - posY;
+      } else if (e.touches.length === 2) {
+        dragging = false;
+        lastTouchDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        lastTouchCenter = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchmove', e => {
+      if (dragging && e.touches.length === 1) {
+        posX = e.touches[0].clientX - startX;
+        posY = e.touches[0].clientY - startY;
+        updateTransform();
+        e.preventDefault(); // Prevent page scroll while panning
+      } else if (e.touches.length === 2 && lastTouchDist !== null) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const center = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+        };
+        // Zoom relative to the center of the pinch
+        const scaleChange = dist / lastTouchDist;
+        scale = Math.max(0.1, scale * scaleChange);
+        // Optionally, adjust posX/posY to zoom towards pinch center
+        lastTouchDist = dist;
+        lastTouchCenter = center;
+        updateTransform();
+        e.preventDefault(); // Prevent page scroll while pinching
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', e => {
+      if (e.touches.length === 0) {
+        dragging = false;
+        lastTouchDist = null;
+        lastTouchCenter = null;
+      }
+    });
+
+    // Zoom with mouse wheel
+    imgBox.addEventListener('wheel', e => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.1 : -0.1;
+      scale = Math.max(0.1, scale + delta);
+      updateTransform();
+    });
   </script>
 </body>
 </html>
