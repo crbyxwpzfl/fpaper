@@ -34,7 +34,8 @@
 </form>
 <div class="img-region-container">
   <img id="blah" src="#" alt="your image" style="max-width:100%; display:none;" />
-  <canvas id="ditheredOverlay" width="400" height="300" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas>
+  <!-- <canvas id="ditheredOverlay" width="400" height="300" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas> -->
+  <canvas id="ditheredOverlay" width="300" height="400" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas> <!-- 3:4 TEST -->
   <div id="region" style="display:none;"></div>
 </div>
 <button id="downloadBtn" style="margin-top:1em; display:none;">Download Dithered 400x300 Binary</button>
@@ -46,7 +47,8 @@ const region = document.getElementById('region');
 const ditheredOverlay = document.getElementById('ditheredOverlay');
 const downloadBtn = document.getElementById('downloadBtn');
 let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
-let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
+//let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
+let regionData = {left: 50, top: 50, width: 150, height: 200}; // default 3:4 TEST
 let imgRect = null;
 
 function updateRegion() {
@@ -58,8 +60,10 @@ function updateRegion() {
   // Position dithered overlay
   ditheredOverlay.style.left = regionData.left + 'px';
   ditheredOverlay.style.top = regionData.top + 'px';
-  ditheredOverlay.width = 400;
-  ditheredOverlay.height = 300;
+  //ditheredOverlay.width = 400;
+  //ditheredOverlay.height = 300;
+  ditheredOverlay.width = 300;
+  ditheredOverlay.height = 400;
   ditheredOverlay.style.width = regionData.width + 'px';
   ditheredOverlay.style.height = regionData.height + 'px';
   ditheredOverlay.style.display = 'block';
@@ -73,18 +77,28 @@ function updateRegion() {
     const sw = regionData.width * scaleX;
     const sh = regionData.height * scaleY;
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = 400;
-    tempCanvas.height = 300;
+    //tempCanvas.width = 400;
+    //tempCanvas.height = 300;
+    tempCanvas.width = 300; 
+    tempCanvas.height = 400;
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(
+    //tempCtx.drawImage(
+    //  blah,
+    //  sx, sy, sw, sh,
+    //  0, 0, 400, 300
+    //);
+    tempCtx.drawImage(  // 3:4 TEST
       blah,
       sx, sy, sw, sh,
-      0, 0, 400, 300
+      0, 0, 300, 400
     );
-    dithering(tempCtx, 400, 300, 128, 3); // 3 = Atkinson
+    //dithering(tempCtx, 400, 300, 128, 3); // 3 = Atkinson
+    dithering(tempCtx, 300, 400, 128, 3); // 3 = Atkinson 3:4 TEST
     const overlayCtx = ditheredOverlay.getContext('2d');
-    overlayCtx.clearRect(0, 0, 400, 300);
-    overlayCtx.drawImage(tempCanvas, 0, 0, 400, 300);
+    //overlayCtx.clearRect(0, 0, 400, 300);
+    overlayCtx.clearRect(0, 0, 300, 400); // 3:4 TEST
+    //overlayCtx.drawImage(tempCanvas, 0, 0, 400, 300);
+    overlayCtx.drawImage(tempCanvas, 0, 0, 300, 400); // 3:4 TEST
     // Show download button when dithered overlay is ready
     downloadBtn.style.display = 'inline-block';
   } else {
@@ -101,8 +115,10 @@ imgInp.onchange = evt => {
       imgRect = blah.getBoundingClientRect();
       // Set region to center, 50% of image width, 4:3
       const iw = blah.width, ih = blah.height;
-      let rw = iw * 0.5, rh = rw * 3/4;
-      if (rh > ih) { rh = ih * 0.5; rw = rh * 4/3; }
+      //let rw = iw * 0.5, rh = rw * 3/4;
+      let rw = iw * 0.5, rh = rw * 4/3; // 3:4 TEST
+      //if (rh > ih) { rh = ih * 0.5; rw = rh * 4/3; }
+      if (rh > ih) { rh = ih * 0.5; rw = rh * 3/4; } // 3:4 TEST
       regionData = {
         left: (iw - rw) / 2,
         top: (ih - rh) / 2,
@@ -146,13 +162,27 @@ region.addEventListener('wheel', function(e) {
   let scale = e.deltaY < 0 ? 1.05 : 0.95;
   if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
   let newWidth = regionData.width * scale;
-  let newHeight = newWidth * 3/4;
+  //let newHeight = newWidth * 3/4;
+  let newHeight = newWidth * 4/3; // 3:4 TEST
   // Clamp to image bounds
-  if (newWidth < 40 || newHeight < 30) return;
-  if (regionData.left + newWidth > blah.width) newWidth = blah.width - regionData.left, newHeight = newWidth * 3/4;
-  if (regionData.top + newHeight > blah.height) newHeight = blah.height - regionData.top, newWidth = newHeight * 4/3;
+  //if (newWidth < 40 || newHeight < 30) return;
+  if (newWidth < 30 || newHeight < 40) return; // 3:4 TEST
+  // Calculate center before scaling
+  let centerX = regionData.left + regionData.width / 2;
+  let centerY = regionData.top + regionData.height / 2;
+  // Adjust newWidth/newHeight if out of bounds
+  //if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 3/4;
+  if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3; // 3:4 TEST
+  //if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 4/3;
+  if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;   // 3:4 TEST
+  //if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 3/4;
+  if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 4/3;   // 3:4 TEST
+  //if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 4/3;
+  if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 3/4; // 3:4 TEST
   regionData.width = newWidth;
   regionData.height = newHeight;
+  regionData.left = centerX - newWidth / 2;
+  regionData.top = centerY - newHeight / 2;
   updateRegion();
 });
 
@@ -193,12 +223,26 @@ region.addEventListener('touchmove', function(e) {
     );
     let scale = dist / lastTouchDist;
     let newWidth = startWidth * scale;
-    let newHeight = newWidth * 3/4;
-    if (newWidth < 40 || newHeight < 30) return;
-    if (regionData.left + newWidth > blah.width) newWidth = blah.width - regionData.left, newHeight = newWidth * 3/4;
-    if (regionData.top + newHeight > blah.height) newHeight = blah.height - regionData.top, newWidth = newHeight * 4/3;
+    //let newHeight = newWidth * 3/4;
+    let newHeight = newWidth * 4/3; // 3:4 TEST
+    //if (newWidth < 40 || newHeight < 30) return;
+    if (newWidth < 30 || newHeight < 40) return; // 3:4 TEST
+    // Calculate center before scaling
+    let centerX = regionData.left + regionData.width / 2;
+    let centerY = regionData.top + regionData.height / 2;
+    // Adjust newWidth/newHeight if out of bounds
+    //if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 3/4;
+    //if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 4/3;
+    //if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 3/4;
+    //if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 4/3;
+    if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3; // 3:4 TEST
+    if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4; // 3:4 TEST
+    if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 4/3; // 3:4 TEST
+    if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 3/4; // 3:4 TEST
     regionData.width = newWidth;
     regionData.height = newHeight;
+    regionData.left = centerX - newWidth / 2;
+    regionData.top = centerY - newHeight / 2;
     updateRegion();
   }
 }, { passive: false });
@@ -211,8 +255,10 @@ region.addEventListener('touchend', function(e) {
 downloadBtn.addEventListener('click', function() {
   // Get dithered 400x300 image from overlay
   const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = 400;
-  tempCanvas.height = 300;
+  //tempCanvas.width = 400;
+  //tempCanvas.height = 300;
+  tempCanvas.width = 300; // 3:4 TEST
+  tempCanvas.height = 400;  // 3:4 TEST
   const tempCtx = tempCanvas.getContext('2d');
   // Map regionData (displayed image) to natural image coordinates
   const scaleX = blah.naturalWidth / blah.width;
@@ -222,15 +268,22 @@ downloadBtn.addEventListener('click', function() {
   const sw = regionData.width * scaleX;
   const sh = regionData.height * scaleY;
   tempCtx.save();
-  tempCtx.translate(200, 150);
+  //tempCtx.translate(200, 150); 
+  tempCtx.translate(150, 200); // TEST 3:4
   if (typeof rotation !== 'undefined') tempCtx.rotate(rotation);
-  tempCtx.drawImage(
+  //tempCtx.drawImage(
+  //  blah,
+  //  sx, sy, sw, sh,
+  //  -200, -150, 400, 300
+  //);
+  tempCtx.drawImage(  // 3:4 TEST
     blah,
     sx, sy, sw, sh,
-    -200, -150, 400, 300
+    -150, -200, 300, 400
   );
   tempCtx.restore();
-  dithering(tempCtx, 400, 300, 128, 3); // Atkinson
+  //dithering(tempCtx, 400, 300, 128, 3); // Atkinson
+  dithering(tempCtx, 300, 400, 128, 3); // Atkinson 3:4 TEST
   // Convert to binary using canvas2bytes from dithering.js
   const bytes = canvas2bytes(tempCanvas, 'bw');
   const byteArray = new Uint8Array(bytes);
@@ -238,7 +291,8 @@ downloadBtn.addEventListener('click', function() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'dithered_400x300.bin';
+  //a.download = 'dithered_400x300.bin';
+  a.download = 'dithered_300x400.bin'; // 3:4 TEST
   document.body.appendChild(a);
   a.click();
   setTimeout(() => {
