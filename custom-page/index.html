@@ -14,7 +14,7 @@
         body { overscroll-behavior: none; height: 100%; width: 100%; margin: 0; padding: 0; font-family:  -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
         .text-center { text-align: center; }
         .gray { color: #667189; }
-        .shadow { filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)) drop-shadow(0 2px 2px rgb(0 0 0 / 0.06)); }
+        .shadow { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, 0)) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.075)); }
         .w-full { font-family:  Menlo; font-size: 10px; width: 100%; }
         .grid { display: grid; }
         .gap-2 { gap: 0.5rem; }
@@ -22,9 +22,9 @@
         .grow { font-family:  Menlo; font-size: 20px; flex-grow: 1; }
         .justify-items-end { justify-items: end; }
         .rounded { border-radius: 0.5rem; }
-        .section { box-sizing: border-box; background-color: #f8f9fa; }
+        .section { box-sizing: border-box; background-color: #00000000; }
         .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; }
-        .main .pannel { position: relative; border: #fff; border-style: solid; border-width: 0.5rem; border-radius: 1rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 0px; }
+        .main .pannel { position: relative; border: #fff; border-style: solid; border-width: 0.5rem; border-radius: 1rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 40px; }
         .pannel button { cursor: pointer; padding: 8px 10px 8px; font-size: 15px; outline-style: none; border: 0px; color: #ffffff; background-color: #0067f4; }
         .pannel button:disabled { background-color: #5a6169; }
         .pannel #record { min-height: 3rem; padding: 0.5rem; resize: vertical; overscroll-behavior: none; }
@@ -41,7 +41,8 @@
             position: fixed;
             z-index: 1000;
             left: 0; top: 0; width: 100vw; height: 100vh;
-            background: rgba(0,0,0,0.6);
+            /* background: rgba(0,0,0,0.6); */
+            background: rgba(0, 0, 0, 0.075);
             justify-content: center;
             align-items: center;
         }
@@ -75,7 +76,7 @@
             box-sizing: border-box;
             display: none;
             touch-action: none;
-            border: 2px dashed #00f;
+            border: 2px dashed rgb(0, 0, 0);
             border-radius: 0.5rem;
         }
         #ditheredOverlay {
@@ -92,9 +93,9 @@
             background: #0067f4;
             color: #fff;
             border: none;
-            border-radius: 2rem;
-            padding: 0.7rem 1.5rem;
-            font-size: 1.2rem;
+            border-radius: 0.7rem;
+            padding: 0.5rem 0.5rem;
+            font-size: 1rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             cursor: pointer;
             display: none;
@@ -113,10 +114,10 @@
 </head>
 <body>
     <div class="section main text-center">
-        <h1 id="title" style="display: none;">WebSerial</h1>
-        <a href="/">
+        <!-- <h1 id="title" style="display: none;">WebSerial</h1>
+         <a href="/">
             <img id="logo" src="/logo" onerror="removeLogo();" />
-        </a>
+        </a> -->
         <div class="pannel shadow grid gap-2">
             <div id="control-button">
                 <button class="rounded shadow" onclick="terminalClean()">
@@ -129,7 +130,7 @@
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
                 </button>
             </div>
-            <textarea class="w-full rounded" title="record" id="record" cols="50" rows="40" disabled></textarea>
+            <textarea class="w-full rounded" title="record" id="record" cols="50" rows="50" disabled></textarea>
             <div class="flex w-full grid gap-2" id="terminal">
                 <input type="text" name="cmd" id="command-text" class="grow rounded" /><button class="grid justify-items-end rounded shadow" id="command-button">SEND</button>
                 <button class="grid justify-items-end rounded shadow" id="img-button">CHOOSE FILE</button>
@@ -338,8 +339,8 @@
         ditheredOverlay.style.height = regionData.height + 'px';
         ditheredOverlay.style.display = 'block';
         // Position SEND button at bottom right of overlay region, fixed size
-        sendBtn.style.left = (regionData.left + regionData.width + sendBtn.offsetWidth - 80 ) + 'px';
-        sendBtn.style.top = (regionData.top + regionData.height + sendBtn.offsetHeight - 50 ) + 'px';
+        sendBtn.style.left = (regionData.left + regionData.width - sendBtn.offsetWidth + 10 ) + 'px';
+        sendBtn.style.top = (regionData.top + regionData.height - sendBtn.offsetHeight + 20 ) + 'px';
         sendBtn.style.display = 'block';
         if (popupImage.src && popupImage.complete && regionData.width > 0 && regionData.height > 0) {
             const scaleX = popupImage.naturalWidth / popupImage.width;
@@ -387,17 +388,24 @@
         if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
         let newWidth = regionData.width * scale;
         let newHeight = newWidth * 4/3;
+        // Clamp to image size
         if (newWidth < 30 || newHeight < 40) return;
+        if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
+        if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
+        // Calculate center before scaling
         let centerX = regionData.left + regionData.width / 2;
         let centerY = regionData.top + regionData.height / 2;
-        if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
-        if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
-        if (centerX + newWidth / 2 > popupImage.width) newWidth = (popupImage.width - centerX) * 2, newHeight = newWidth * 4/3;
-        if (centerY + newHeight / 2 > popupImage.height) newHeight = (popupImage.height - centerY) * 2, newWidth = newHeight * 3/4;
+        // Move region to keep it inside image after scaling
+        let newLeft = centerX - newWidth / 2;
+        let newTop = centerY - newHeight / 2;
+        if (newLeft < 0) newLeft = 0;
+        if (newTop < 0) newTop = 0;
+        if (newLeft + newWidth > popupImage.width) newLeft = popupImage.width - newWidth;
+        if (newTop + newHeight > popupImage.height) newTop = popupImage.height - newHeight;
         regionData.width = newWidth;
         regionData.height = newHeight;
-        regionData.left = centerX - newWidth / 2;
-        regionData.top = centerY - newHeight / 2;
+        regionData.left = newLeft;
+        regionData.top = newTop;
         updateRegion();
     });
     region.addEventListener('touchstart', function(e) {
@@ -437,16 +445,20 @@
             let newWidth = startWidth * scale;
             let newHeight = newWidth * 4/3;
             if (newWidth < 30 || newHeight < 40) return;
+            if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
+            if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
             let centerX = regionData.left + regionData.width / 2;
             let centerY = regionData.top + regionData.height / 2;
-            if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
-            if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
-            if (centerX + newWidth / 2 > popupImage.width) newWidth = (popupImage.width - centerX) * 2, newHeight = newWidth * 4/3;
-            if (centerY + newHeight / 2 > popupImage.height) newHeight = (popupImage.height - centerY) * 2, newWidth = newHeight * 3/4;
+            let newLeft = centerX - newWidth / 2;
+            let newTop = centerY - newHeight / 2;
+            if (newLeft < 0) newLeft = 0;
+            if (newTop < 0) newTop = 0;
+            if (newLeft + newWidth > popupImage.width) newLeft = popupImage.width - newWidth;
+            if (newTop + newHeight > popupImage.height) newTop = popupImage.height - newHeight;
             regionData.width = newWidth;
             regionData.height = newHeight;
-            regionData.left = centerX - newWidth / 2;
-            regionData.top = centerY - newHeight / 2;
+            regionData.left = newLeft;
+            regionData.top = newTop;
             updateRegion();
         }
     }, { passive: false });
