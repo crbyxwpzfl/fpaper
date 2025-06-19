@@ -1,483 +1,781 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <title>Web Console & Image Dither</title>
+    <title>Web Console</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style type="text/css">
-        /* ...existing styles from webserial.html... */
-        div { display: block; }
-        a { margin: 0rem; text-decoration: none; }
-        *, ::after, ::before { box-sizing: inherit; }
-        p { margin: 0 0 1rem; }
-        body { overscroll-behavior: none; height: 100%; width: 100%; margin: 0; padding: 0; font-family:  -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
-        .text-center { text-align: center; }
-        .gray { color: #667189; }
-        .shadow { filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)) drop-shadow(0 2px 2px rgb(0 0 0 / 0.06)); }
-        .w-full { font-family:  Menlo; font-size: 10px; width: 100%; }
-        .grid { display: grid; }
-        .gap-2 { gap: 0.5rem; }
-        .flex { display: flex; }
-        .grow { font-family:  Menlo; font-size: 20px; flex-grow: 1; }
-        .justify-items-end { justify-items: end; }
-        .rounded { border-radius: 0.5rem; }
-        .section { box-sizing: border-box; background-color: #f8f9fa; }
-        .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; }
-        .main .pannel { position: relative; border: #fff; border-style: solid; border-width: 0.5rem; border-radius: 1rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 0px; }
-        .pannel button { cursor: pointer; padding: 8px 10px 8px; font-size: 15px; outline-style: none; border: 0px; color: #ffffff; background-color: #0067f4; }
-        .pannel button:disabled { background-color: #5a6169; }
-        .pannel #record { min-height: 3rem; padding: 0.5rem; resize: vertical; overscroll-behavior: none; }
-        #control-button { position: absolute; top: 0.5rem; right: 0.5rem; }
-        #control-button button { background-color: #5a6169; }
-        .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: black; }
-        .footer { padding: 1rem 0.5rem; background-color: white; }
-        .copyright { padding-bottom: 1rem; }
-        .float-left { float: left; }
-        .float-right { float: right; }
-        /* Image region selector styles from image.html */
-        .img-region-container { position: relative; display: inline-block; }
-        #blah { display: block; max-width: 100%; width: 600px; height: auto; }
-        #region { position: absolute; cursor: move; box-sizing: border-box; display: none; touch-action: none; }
+        div {
+            display: block;
+        }
+
+        a {
+            margin: 0rem;
+            text-decoration: none;
+        }
+
+        *,
+        ::after,
+        ::before {
+            -webkit-box-sizing: inherit;
+            box-sizing: inherit;
+        }
+
+        p {
+            margin: 0 0 1rem;
+        }
+
+        body {
+            overscroll-behavior: none;
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            font-family:  -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI",
+            Roboto, "Helvetica Neue", sans-serif;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .gray {
+            color: #667189;
+        }
+
+        .shadow {
+            filter: drop-shadow(0 4px 3px rgb(0 0 0 / 0.07)) drop-shadow(0 2px 2px rgb(0 0 0 / 0.06));
+        }
+
+        .w-full {
+            font-family:  Menlo;
+            font-size: 10px;
+            width: 100%;
+        }
+
+        .grid {
+            display: grid;
+        }
+
+        .gap-2 {
+            gap: 0.5rem;
+        }
+
+        .flex {
+            display: flex;
+        }
+
+        .grow {
+            font-family:  Menlo;
+            font-size: 20px;
+            flex-grow: 1;
+        }
+
+        .justify-items-end {
+            justify-items: end;
+        }
+
+        .rounded {
+            border-radius: 0.5rem;
+        }
+
+        .section {
+            box-sizing: border-box;
+            background-color: #f8f9fa;
+        }
+
+        .main {
+            /* padding-top: 3rem; */
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            height: 70dvh;
+        }
+
+        .main .pannel {
+            position: relative;
+            border: #fff;
+            border-style: solid;
+            border-width: 0.5rem;
+            border-radius: 1rem;
+            background-color: #fff;
+            width: calc(100% - 1rem);
+            font-size: 10px;
+            margin-top: 0px;
+        }
+
+        .pannel button {
+            cursor: pointer;
+            padding: 8px 10px 8px;
+            font-size: 15px;
+            outline-style: none;
+            border: 0px;
+            color: #ffffff;
+            background-color: #0067f4;
+        }
+
+        .pannel button:disabled {
+            background-color: #5a6169;
+        }
+
+        .pannel #record {
+            min-height: 3rem;
+            padding: 0.5rem;
+            resize: vertical;
+            overscroll-behavior: none;
+        }
+
+        #control-button {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+        }
+
+        #control-button button {
+            background-color: #5a6169;
+        }
+
+        .alert span {
+            user-select: none;
+            background: #ffe14d;
+            padding: 1px 10px;
+            display: block;
+            color: black;
+        }
+
+        .footer {
+            padding: 1rem 0.5rem;
+            background-color: white;
+        }
+
+        .copyright {
+            padding-bottom: 1rem;
+        }
+
+        .float-left {
+            float: left;
+        }
+
+        .float-right {
+            float: right;
+        }
+
+        /* Image popup overlay styles */
+        #imageOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .img-popup {
+            position: relative;
+            max-width: 90vw;
+            max-height: 90vh;
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+
+        .img-region-container {
+            position: relative;
+            display: inline-block;
+        }
+
+        #popupImage {
+            display: block;
+            max-width: 100%;
+            width: 600px;
+            height: auto;
+            border-radius: 1rem;
+        }
+
+        #popupRegion {
+            position: absolute;
+            cursor: move;
+            box-sizing: border-box;
+            display: none;
+            touch-action: none;
+            border: 2px solid #0067f4;
+            background-color: rgba(0, 103, 244, 0.1);
+        }
+
+        #popupDitheredOverlay {
+            position: absolute;
+            left: 0;
+            top: 0;
+            display: none;
+            pointer-events: none;
+            opacity: 0.8;
+        }
+
+        #sendImageBtn {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            padding: 10px 15px;
+            font-size: 14px;
+            background-color: #0067f4;
+            color: white;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            display: none;
+        }
+
+        #sendImageBtn:hover {
+            background-color: #0056d3;
+        }
+
+        /* Hidden file input */
+        #imageInput {
+            display: none;
+        }
     </style>
     <script src="../original-page/js/dithering.js"></script>
 </head>
+
 <body>
     <div class="section main text-center">
         <h1 id="title" style="display: none;">WebSerial</h1>
         <a href="/">
             <img id="logo" src="/logo" onerror="removeLogo();" />
         </a>
+
         <div class="pannel shadow grid gap-2">
             <div id="control-button">
                 <button class="rounded shadow" onclick="terminalClean()">
-                    <!-- ...delete icon... -->
-                    <svg viewBox="64 64 896 896" focusable="false" data-icon="delete" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 256H736v-80c0-35.3-28.7-64-64-64H352c-35.3 0-64 28.7-64 64v80H160c-17.7 0-32 14.3-32 32v32c0 4.4 3.6 8 8 8h60.4l24.7 523c1.6 34.1 29.8 61 63.9 61h454c34.2 0 62.3-26.8 63.9-61l24.7-523H888c4.4 0 8-3.6 8-8v-32c0-17.7-14.3-32-32-32zm-200 0H360v-72h304v72z"></path></svg>
+                    <svg viewBox="64 64 896 896" focusable="false" data-icon="delete" width="1em" height="1em"
+                        fill="currentColor" aria-hidden="true">
+                        <path
+                            d="M864 256H736v-80c0-35.3-28.7-64-64-64H352c-35.3 0-64 28.7-64 64v80H160c-17.7 0-32 14.3-32 32v32c0 4.4 3.6 8 8 8h60.4l24.7 523c1.6 34.1 29.8 61 63.9 61h454c34.2 0 62.3-26.8 63.9-61l24.7-523H888c4.4 0 8-3.6 8-8v-32c0-17.7-14.3-32-32-32zm-200 0H360v-72h304v72z">
+                        </path>
+                    </svg>
                 </button>
                 <button class="rounded shadow" onclick="enableFlowLock=!enableFlowLock">
-                    <!-- ...lock icon... -->
-                    <svg viewBox="64 64 896 896" focusable="false" data-icon="lock" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M832 464h-68V240c0-70.7-57.3-128-128-128H388c-70.7 0-128 57.3-128 128v224h-68c-17.7 0-32 14.3-32 32v384c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V496c0-17.7-14.3-32-32-32zM332 240c0-30.9 25.1-56 56-56h248c30.9 0 56 25.1 56 56v224H332V240zm460 600H232V536h560v304zM484 701v53c0 4.4 3.6 8 8 8h40c4.4 0 8-3.6 8-8v-53a48.01 48.01 0 10-56 0z"></path></svg>
+                    <svg viewBox="64 64 896 896" focusable="false" data-icon="lock" width="1em" height="1em"
+                        fill="currentColor" aria-hidden="true">
+                        <path
+                            d="M832 464h-68V240c0-70.7-57.3-128-128-128H388c-70.7 0-128 57.3-128 128v224h-68c-17.7 0-32 14.3-32 32v384c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V496c0-17.7-14.3-32-32-32zM332 240c0-30.9 25.1-56 56-56h248c30.9 0 56 25.1 56 56v224H332V240zm460 600H232V536h560v304zM484 701v53c0 4.4 3.6 8 8 8h40c4.4 0 8-3.6 8-8v-53a48.01 48.01 0 10-56 0z">
+                        </path>
+                    </svg>
                 </button>
                 <button class="rounded shadow" onclick="enableTimestamp=!enableTimestamp">
-                    <!-- ...clock icon... -->
-                    <svg viewBox="64 64 896 896" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
+                    <svg viewBox="64 64 896 896" focusable="false" data-icon="clock-circle" width="1em" height="1em"
+                        fill="currentColor" aria-hidden="true">
+                        <path
+                            d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z">
+                        </path>
+                        <path
+                            d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z">
+                        </path>
+                    </svg>
                 </button>
             </div>
-            <!-- Terminal/Image area -->
-            <div id="terminal-area">
-                <textarea class="w-full rounded" title="record" id="record" cols="50" rows="40" disabled></textarea>
-            </div>
+            <textarea class="w-full rounded" title="record" id="record" cols="50" rows="40" disabled></textarea>
             <div class="flex w-full grid gap-2" id="terminal">
-                <input type="text" name="cmd" id="command-text" class="grow rounded" />
-                <button class="grid justify-items-end rounded shadow" id="command-button">SEND</button>
-                <input type="file" id="imgInp" accept="image/*" style="display:none;" />
-                <button class="grid justify-items-end rounded shadow" id="img-button">CHOOSE FILE</button>
+                <input type="text" name="cmd" id="command-text" class="grow rounded" /><button
+                    class="grid justify-items-end rounded shadow" id="command-button">
+                    SEND
+                </button>
+                <button
+                    class="grid justify-items-end rounded shadow" id="img-button">
+                    CHOOSE FILE
+                </button>
             </div>
         </div>
         <h1 />
     </div>
+
+    <!-- Image overlay popup -->
+    <div id="imageOverlay">
+        <div class="img-popup">
+            <div class="img-region-container">
+                <img id="popupImage" src="#" alt="Selected image" />
+                <canvas id="popupDitheredOverlay" width="300" height="400"></canvas>
+                <div id="popupRegion"></div>
+                <button id="sendImageBtn">SEND</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden file input -->
+    <input type="file" id="imageInput" accept="image/*" />
 </body>
+
 <script>
-// ...existing webserial.js code...
-let gateway = `ws://${window.location.host + window.location.pathname}ws`;
-let websocket;
-let textArea = document.getElementById("record");
-let enableFlowLock = false;
-let enableTimestamp = false;
-let pingTimeout;
-let connectTimeout;
-let commandHistory = [];
-let commandHistoryIdx = 0;
-let imageMode = false; // true if image is displayed
+    // WebSerial functionality
+    let gateway = `ws://${window.location.host + window.location.pathname}ws`;
+    let websocket;
+    let textArea = document.getElementById("record");
+    let enableFlowLock = false;
+    let enableTimestamp = false;
+    let pingTimeout;
+    let connectTimeout;
+    let commandHistory = [];
+    let commandHistoryIdx = 0;
 
-function removeLogo() {
-    document.getElementById("logo").remove();
-    document.getElementById("title").style.display = "block";
-}
+    // Image functionality variables
+    let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
+    let regionData = {left: 50, top: 50, width: 150, height: 200}; // 3:4 aspect ratio
+    let imgRect = null;
+    let lastTouchDist = null;
 
-function initWebPage() {
-    document.getElementById("command-button").disabled = true;
-    document.getElementById("command-text").disabled = true;
-    initCommandHistory();
-    initWebSocket();
-    initButton();
-    trapKeyPress();
-    initImageButton();
-}
+    function removeLogo() {
+        document.getElementById("logo").remove();
+        document.getElementById("title").style.display = "block";
+    }
 
-function initCommandHistory() {
-    const json = localStorage.history;
-    commandHistory = json ? JSON.parse(json) : [];
-    commandHistoryIdx = commandHistory.length;
-}
-
-function initWebSocket() {
-    clearTimeout(connectTimeout);
-    clearTimeout(pingTimeout);
-    pingTimeout = false;
-    connectTimeout = setTimeout(() => {
-        terminalWrite("search timeout");
-        websocket.close();
+    function initWebPage() {
+        document.getElementById("command-button").disabled = true;
+        document.getElementById("command-text").disabled = true;
+        initCommandHistory();
         initWebSocket();
-    }, 3000);
-    terminalWrite("please wait while searching.... ");
-    websocket = new WebSocket(gateway);
-    websocket.onopen = onOpen;
-    websocket.onclose = onClose;
-    websocket.onmessage = onMessage;
-    websocket.onerror = onError;
-}
+        initButton();
+        trapKeyPress();
+        initImageHandling();
+    }
 
-function initButton() {
-    document.getElementById("command-button").addEventListener("click", function() {
-        if (imageMode) {
-            sendDitheredImage();
-        } else {
-            sendCommand();
-        }
-    });
-}
+    function initCommandHistory() {
+        const json = localStorage.history;
+        commandHistory = json ? JSON.parse(json) : [];
+        commandHistoryIdx = commandHistory.length;
+    }
 
-function trapKeyPress() {
-    document.getElementById("command-text").addEventListener("keypress", (event) => {
-        if (event.code === "Enter") {
-            event.preventDefault();
-            document.getElementById("command-button").click();
-        }
-    });
-    document.addEventListener("keydown", (event) => {
-        if (document.activeElement && document.activeElement.id === 'command-text') {
-            if (event.code === "ArrowUp") {
-                commandHistoryIdx--;
-                if (commandHistoryIdx < 0)
-                    commandHistoryIdx = commandHistory.length > 0 ? commandHistory.length - 1 : 0;
-                if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
-                    document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
-            } else if (event.code === "ArrowDown") {
-                commandHistoryIdx++;
-                if (commandHistoryIdx >= commandHistory.length)
-                    commandHistoryIdx = 0;
-                if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
-                    document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
-            }
-        }
-    });
-}
-
-function onOpen(event) {
-    clearTimeout(connectTimeout);
-    terminalWrite("found portal try 'help' for configuration");
-    document.getElementById("command-button").disabled = false;
-    document.getElementById("command-text").disabled = false;
-}
-
-function onError(e) {
-    console.log("Error!", e);
-    websocket.close();
-}
-
-function onClose(e) {
-    console.log("connection closed.", e);
-}
-
-function onMessage(event) {
-    if (event.data == 'pong') {
+    function initWebSocket() {
+        clearTimeout(connectTimeout);
         clearTimeout(pingTimeout);
         pingTimeout = false;
-    } else {
-        terminalWrite(event.data);
-    }
-}
-
-function terminalWrite(raw) {
-    if (enableTimestamp) {
-        let now = new Date();
-        raw = "[" + now.toLocaleTimeString() + "] " + raw + "\n";
-    }
-    textArea.value += raw + "\n";
-    if (!enableFlowLock) {
-        textArea.scrollTop = textArea.scrollHeight;
-    }
-}
-
-function terminalClean() {
-    if (imageMode) {
-        // Exit image mode, restore terminal
-        imageMode = false;
-        showTerminalArea();
-    } else {
-        textArea.value = "";
-        textArea.scrollTop = textArea.scrollHeight;
-    }
-}
-
-function sendCommand() {
-    let cmd = document.getElementById("command-text").value;
-    console.log('send command: ', cmd);
-    websocket.send(cmd);
-    commandHistory.push(cmd);
-    if (commandHistory.length > 20) {
-        commandHistory.splice(0, commandHistory.length - 20);
-    }
-    commandHistoryIdx = commandHistory.length;
-    document.getElementById("command-text").value = "";
-    localStorage.history = JSON.stringify(commandHistory);
-}
-
-setInterval(() => {
-    if (!pingTimeout && websocket.readyState == WebSocket.OPEN) {
-        pingTimeout = setTimeout(() => {
-            terminalWrite("Ping timeout.");
+        connectTimeout = setTimeout(() => {
+            terminalWrite("search timeout");
             websocket.close();
             initWebSocket();
         }, 3000);
-        websocket.send("ping");
+        terminalWrite("please wait while searching.... ");
+        websocket = new WebSocket(gateway);
+        websocket.onopen = onOpen;
+        websocket.onclose = onClose;
+        websocket.onmessage = onMessage;
+        websocket.onerror = onError;
     }
-}, 2000);
 
-window.addEventListener("DOMContentLoaded", function () {
-    initWebPage();
-}, false);
-
-// --- Image region/dither integration ---
-function initImageButton() {
-    document.getElementById('img-button').addEventListener('click', function() {
-        document.getElementById('imgInp').click();
-    });
-    document.getElementById('imgInp').addEventListener('change', onImageSelected);
-}
-
-function onImageSelected(evt) {
-    const [file] = evt.target.files;
-    if (file) {
-        showImageArea();
-        loadImage(file);
+    function initButton() {
+        document.getElementById("command-button").addEventListener("click", sendCommand);
+        document.getElementById("img-button").addEventListener("click", chooseImage);
     }
-}
 
-function showImageArea() {
-    imageMode = true;
-    const terminalArea = document.getElementById('terminal-area');
-    terminalArea.innerHTML = `
-    <div class="img-region-container">
-      <img id="blah" src="#" alt="your image" style="max-width:100%; display:none;" />
-      <canvas id="ditheredOverlay" width="300" height="400" style="position:absolute; left:0; top:0; display:none; pointer-events:none;"></canvas>
-      <div id="region" style="display:none;"></div>
-    </div>
-    <!-- <p id="imgHint">Move/resize the region. SEND to upload dithered image.</p> -->
-    `;
-}
+    function initImageHandling() {
+        const imageInput = document.getElementById("imageInput");
+        const imageOverlay = document.getElementById("imageOverlay");
+        const popupImage = document.getElementById("popupImage");
+        const popupRegion = document.getElementById("popupRegion");
+        const popupDitheredOverlay = document.getElementById("popupDitheredOverlay");
+        const sendImageBtn = document.getElementById("sendImageBtn");
 
-function showTerminalArea() {
-    const terminalArea = document.getElementById('terminal-area');
-    terminalArea.innerHTML = `<textarea class="w-full rounded" title="record" id="record" cols="50" rows="40" disabled></textarea>`;
-    textArea = document.getElementById("record");
-}
+        // Image file selection
+        imageInput.addEventListener('change', handleImageSelect);
+        
+        // Close overlay when clicking outside
+        imageOverlay.addEventListener('click', function(e) {
+            if (e.target === imageOverlay) {
+                closeImageOverlay();
+            }
+        });
 
-// --- Image region/dither logic (from image.html, adapted) ---
-let regionData = {left: 50, top: 50, width: 150, height: 200};
-let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
-let imgRect = null;
-let blah, region, ditheredOverlay;
+        // Send image button
+        sendImageBtn.addEventListener('click', sendImage);
 
-function loadImage(file) {
-    blah = document.getElementById('blah');
-    region = document.getElementById('region');
-    ditheredOverlay = document.getElementById('ditheredOverlay');
-    const url = URL.createObjectURL(file);
-    blah.src = url;
-    blah.style.display = 'block';
-    blah.onload = () => {
-        imgRect = blah.getBoundingClientRect();
-        const iw = blah.width, ih = blah.height;
-        let rw = iw * 0.5, rh = rw * 4/3;
-        if (rh > ih) { rh = ih * 0.5; rw = rh * 3/4; }
-        regionData = {
-            left: (iw - rw) / 2,
-            top: (ih - rh) / 2,
-            width: rw,
-            height: rh
-        };
-        region.style.display = 'block';
-        ditheredOverlay.style.display = 'block';
-        updateRegion();
-    };
-    // Drag/resize events
-    region.addEventListener('mousedown', regionMouseDown);
-    document.addEventListener('mousemove', regionMouseMove);
-    document.addEventListener('mouseup', regionMouseUp);
-    region.addEventListener('wheel', regionWheel, {passive: false});
-    // Touch events
-    region.addEventListener('touchstart', regionTouchStart, {passive: false});
-    region.addEventListener('touchmove', regionTouchMove, {passive: false});
-    region.addEventListener('touchend', regionTouchEnd, {passive: false});
-}
+        // Region manipulation events
+        initRegionEvents();
+    }
 
-function updateRegion() {
-    if (!imgRect) return;
-    region.style.left = regionData.left + 'px';
-    region.style.top = regionData.top + 'px';
-    region.style.width = regionData.width + 'px';
-    region.style.height = regionData.height + 'px';
-    ditheredOverlay.style.left = regionData.left + 'px';
-    ditheredOverlay.style.top = regionData.top + 'px';
-    ditheredOverlay.width = 300;
-    ditheredOverlay.height = 400;
-    ditheredOverlay.style.width = regionData.width + 'px';
-    ditheredOverlay.style.height = regionData.height + 'px';
-    ditheredOverlay.style.display = 'block';
-    if (blah.src && blah.complete && regionData.width > 0 && regionData.height > 0) {
-        const scaleX = blah.naturalWidth / blah.width;
-        const scaleY = blah.naturalHeight / blah.height;
+    function chooseImage() {
+        document.getElementById("imageInput").click();
+    }
+
+    function handleImageSelect(evt) {
+        const [file] = evt.target.files;
+        if (file) {
+            const popupImage = document.getElementById("popupImage");
+            const imageOverlay = document.getElementById("imageOverlay");
+            
+            popupImage.src = URL.createObjectURL(file);
+            popupImage.onload = () => {
+                imgRect = popupImage.getBoundingClientRect();
+                // Set region to center, 50% of image width, 3:4 aspect ratio
+                const iw = popupImage.width, ih = popupImage.height;
+                let rw = iw * 0.5, rh = rw * 4/3; // 3:4 aspect ratio
+                if (rh > ih) { 
+                    rh = ih * 0.5; 
+                    rw = rh * 3/4; 
+                }
+                regionData = {
+                    left: (iw - rw) / 2,
+                    top: (ih - rh) / 2,
+                    width: rw,
+                    height: rh
+                };
+                
+                document.getElementById("popupRegion").style.display = 'block';
+                document.getElementById("popupDitheredOverlay").style.display = 'block';
+                document.getElementById("sendImageBtn").style.display = 'block';
+                updateRegion();
+                imageOverlay.style.display = 'flex';
+            };
+        }
+    }
+
+    function closeImageOverlay() {
+        document.getElementById("imageOverlay").style.display = 'none';
+        document.getElementById("popupRegion").style.display = 'none';
+        document.getElementById("popupDitheredOverlay").style.display = 'none';
+        document.getElementById("sendImageBtn").style.display = 'none';
+        // Reset file input
+        document.getElementById("imageInput").value = '';
+    }
+
+    function updateRegion() {
+        const popupImage = document.getElementById("popupImage");
+        const popupRegion = document.getElementById("popupRegion");
+        const popupDitheredOverlay = document.getElementById("popupDitheredOverlay");
+        const sendImageBtn = document.getElementById("sendImageBtn");
+
+        if (!imgRect) return;
+        
+        popupRegion.style.left = regionData.left + 'px';
+        popupRegion.style.top = regionData.top + 'px';
+        popupRegion.style.width = regionData.width + 'px';
+        popupRegion.style.height = regionData.height + 'px';
+        
+        // Position dithered overlay
+        popupDitheredOverlay.style.left = regionData.left + 'px';
+        popupDitheredOverlay.style.top = regionData.top + 'px';
+        popupDitheredOverlay.width = 300;
+        popupDitheredOverlay.height = 400;
+        popupDitheredOverlay.style.width = regionData.width + 'px';
+        popupDitheredOverlay.style.height = regionData.height + 'px';
+        
+        // Position send button to follow the dithered overlay
+        sendImageBtn.style.left = (regionData.left + regionData.width - 70) + 'px';
+        sendImageBtn.style.top = (regionData.top + regionData.height - 40) + 'px';
+        
+        // Draw dithered region
+        if (popupImage.src && popupImage.complete && regionData.width > 0 && regionData.height > 0) {
+            // Map regionData (displayed image) to natural image coordinates
+            const scaleX = popupImage.naturalWidth / popupImage.width;
+            const scaleY = popupImage.naturalHeight / popupImage.height;
+            const sx = regionData.left * scaleX;
+            const sy = regionData.top * scaleY;
+            const sw = regionData.width * scaleX;
+            const sh = regionData.height * scaleY;
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 300; 
+            tempCanvas.height = 400;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            tempCtx.drawImage(
+                popupImage,
+                sx, sy, sw, sh,
+                0, 0, 300, 400
+            );
+            
+            dithering(tempCtx, 300, 400, 128, 3); // Atkinson dithering
+            
+            const overlayCtx = popupDitheredOverlay.getContext('2d');
+            overlayCtx.clearRect(0, 0, 300, 400);
+            overlayCtx.drawImage(tempCanvas, 0, 0, 300, 400);
+        }
+    }
+
+    function initRegionEvents() {
+        const popupRegion = document.getElementById("popupRegion");
+        const popupImage = document.getElementById("popupImage");
+
+        // Mouse events for drag
+        popupRegion.addEventListener('mousedown', function(e) {
+            dragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = regionData.left;
+            startTop = regionData.top;
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (dragging) {
+                let dx = e.clientX - startX;
+                let dy = e.clientY - startY;
+                let newLeft = Math.max(0, Math.min(popupImage.width - regionData.width, startLeft + dx));
+                let newTop = Math.max(0, Math.min(popupImage.height - regionData.height, startTop + dy));
+                regionData.left = newLeft;
+                regionData.top = newTop;
+                updateRegion();
+            }
+        });
+
+        document.addEventListener('mouseup', function() {
+            dragging = false;
+            document.body.style.userSelect = '';
+        });
+
+        // Resize with mouse wheel
+        popupRegion.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            let scale = e.deltaY < 0 ? 1.05 : 0.95;
+            if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
+            
+            let newWidth = regionData.width * scale;
+            let newHeight = newWidth * 4/3; // 3:4 aspect ratio
+            
+            if (newWidth < 30 || newHeight < 40) return;
+            
+            // Calculate center before scaling
+            let centerX = regionData.left + regionData.width / 2;
+            let centerY = regionData.top + regionData.height / 2;
+            
+            // Adjust newWidth/newHeight if out of bounds
+            if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
+            if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
+            if (centerX + newWidth / 2 > popupImage.width) newWidth = (popupImage.width - centerX) * 2, newHeight = newWidth * 4/3;
+            if (centerY + newHeight / 2 > popupImage.height) newHeight = (popupImage.height - centerY) * 2, newWidth = newHeight * 3/4;
+            
+            regionData.width = newWidth;
+            regionData.height = newHeight;
+            regionData.left = centerX - newWidth / 2;
+            regionData.top = centerY - newHeight / 2;
+            updateRegion();
+        });
+
+        // Touch events for drag and pinch
+        popupRegion.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                dragging = true;
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+                startLeft = regionData.left;
+                startTop = regionData.top;
+            } else if (e.touches.length === 2) {
+                resizing = true;
+                lastTouchDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                startWidth = regionData.width;
+                startHeight = regionData.height;
+            }
+        }, { passive: false });
+
+        popupRegion.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            if (dragging && e.touches.length === 1) {
+                let dx = e.touches[0].clientX - startX;
+                let dy = e.touches[0].clientY - startY;
+                let newLeft = Math.max(0, Math.min(popupImage.width - regionData.width, startLeft + dx));
+                let newTop = Math.max(0, Math.min(popupImage.height - regionData.height, startTop + dy));
+                regionData.left = newLeft;
+                regionData.top = newTop;
+                updateRegion();
+            } else if (resizing && e.touches.length === 2) {
+                let dist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                let scale = dist / lastTouchDist;
+                let newWidth = startWidth * scale;
+                let newHeight = newWidth * 4/3; // 3:4 aspect ratio
+                
+                if (newWidth < 30 || newHeight < 40) return;
+                
+                // Calculate center before scaling
+                let centerX = regionData.left + regionData.width / 2;
+                let centerY = regionData.top + regionData.height / 2;
+                
+                // Adjust newWidth/newHeight if out of bounds
+                if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
+                if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
+                if (centerX + newWidth / 2 > popupImage.width) newWidth = (popupImage.width - centerX) * 2, newHeight = newWidth * 4/3;
+                if (centerY + newHeight / 2 > popupImage.height) newHeight = (popupImage.height - centerY) * 2, newWidth = newHeight * 3/4;
+                
+                regionData.width = newWidth;
+                regionData.height = newHeight;
+                regionData.left = centerX - newWidth / 2;
+                regionData.top = centerY - newHeight / 2;
+                updateRegion();
+            }
+        }, { passive: false });
+
+        popupRegion.addEventListener('touchend', function(e) {
+            dragging = false;
+            resizing = false;
+            e.preventDefault();
+        }, { passive: false });
+    }
+
+    function sendImage() {
+        const popupImage = document.getElementById("popupImage");
+        
+        // Create dithered 300x400 image
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 300;
+        tempCanvas.height = 400;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // Map regionData (displayed image) to natural image coordinates
+        const scaleX = popupImage.naturalWidth / popupImage.width;
+        const scaleY = popupImage.naturalHeight / popupImage.height;
         const sx = regionData.left * scaleX;
         const sy = regionData.top * scaleY;
         const sw = regionData.width * scaleX;
         const sh = regionData.height * scaleY;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 300; 
-        tempCanvas.height = 400;
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.drawImage(blah, sx, sy, sw, sh, 0, 0, 300, 400);
-        dithering(tempCtx, 300, 400, 128, 3);
-        const overlayCtx = ditheredOverlay.getContext('2d');
-        overlayCtx.clearRect(0, 0, 300, 400);
-        overlayCtx.drawImage(tempCanvas, 0, 0, 300, 400);
-    }
-}
-
-function regionMouseDown(e) {
-    dragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startLeft = regionData.left;
-    startTop = regionData.top;
-    document.body.style.userSelect = 'none';
-}
-function regionMouseMove(e) {
-    if (dragging) {
-        let dx = e.clientX - startX;
-        let dy = e.clientY - startY;
-        let newLeft = Math.max(0, Math.min(blah.width - regionData.width, startLeft + dx));
-        let newTop = Math.max(0, Math.min(blah.height - regionData.height, startTop + dy));
-        regionData.left = newLeft;
-        regionData.top = newTop;
-        updateRegion();
-    }
-}
-function regionMouseUp() {
-    dragging = false;
-    document.body.style.userSelect = '';
-}
-function regionWheel(e) {
-    e.preventDefault();
-    let scale = e.deltaY < 0 ? 1.05 : 0.95;
-    if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
-    let newWidth = regionData.width * scale;
-    let newHeight = newWidth * 4/3;
-    if (newWidth < 30 || newHeight < 40) return;
-    let centerX = regionData.left + regionData.width / 2;
-    let centerY = regionData.top + regionData.height / 2;
-    if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
-    if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
-    if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 4/3;
-    if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 3/4;
-    regionData.width = newWidth;
-    regionData.height = newHeight;
-    regionData.left = centerX - newWidth / 2;
-    regionData.top = centerY - newHeight / 2;
-    updateRegion();
-}
-// Touch events for drag and pinch
-let lastTouchDist = null;
-function regionTouchStart(e) {
-    e.preventDefault();
-    if (e.touches.length === 1) {
-        dragging = true;
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        startLeft = regionData.left;
-        startTop = regionData.top;
-    } else if (e.touches.length === 2) {
-        resizing = true;
-        lastTouchDist = Math.hypot(
-            e.touches[0].clientX - e.touches[1].clientX,
-            e.touches[0].clientY - e.touches[1].clientY
+        
+        tempCtx.save();
+        tempCtx.translate(150, 200);
+        if (typeof rotation !== 'undefined') tempCtx.rotate(rotation);
+        tempCtx.drawImage(
+            popupImage,
+            sx, sy, sw, sh,
+            -150, -200, 300, 400
         );
-        startWidth = regionData.width;
-        startHeight = regionData.height;
+        tempCtx.restore();
+        
+        dithering(tempCtx, 300, 400, 128, 3); // Atkinson dithering
+        
+        // Convert to binary using canvas2bytes
+        const bytes = canvas2bytes(tempCanvas, 'bw');
+        const byteArray = new Uint8Array(bytes);
+        
+        // POST to /file
+        fetch('/file', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/octet-stream',
+            },
+            body: byteArray
+        })
+        .then(response => {
+            if (response.ok) {
+                terminalWrite('Image uploaded successfully');
+            } else {
+                terminalWrite('Failed to upload image: ' + response.status);
+            }
+        })
+        .catch(error => {
+            terminalWrite('Error uploading image: ' + error.message);
+        });
+        
+        // Close the overlay
+        closeImageOverlay();
     }
-}
-function regionTouchMove(e) {
-    e.preventDefault();
-    if (dragging && e.touches.length === 1) {
-        let dx = e.touches[0].clientX - startX;
-        let dy = e.touches[0].clientY - startY;
-        let newLeft = Math.max(0, Math.min(blah.width - regionData.width, startLeft + dx));
-        let newTop = Math.max(0, Math.min(blah.height - regionData.height, startTop + dy));
-        regionData.left = newLeft;
-        regionData.top = newTop;
-        updateRegion();
-    } else if (resizing && e.touches.length === 2) {
-        let dist = Math.hypot(
-            e.touches[0].clientX - e.touches[1].clientX,
-            e.touches[0].clientY - e.touches[1].clientY
-        );
-        let scale = dist / lastTouchDist;
-        let newWidth = startWidth * scale;
-        let newHeight = newWidth * 4/3;
-        if (newWidth < 30 || newHeight < 40) return;
-        let centerX = regionData.left + regionData.width / 2;
-        let centerY = regionData.top + regionData.height / 2;
-        if (centerX - newWidth / 2 < 0) newWidth = centerX * 2, newHeight = newWidth * 4/3;
-        if (centerY - newHeight / 2 < 0) newHeight = centerY * 2, newWidth = newHeight * 3/4;
-        if (centerX + newWidth / 2 > blah.width) newWidth = (blah.width - centerX) * 2, newHeight = newWidth * 4/3;
-        if (centerY + newHeight / 2 > blah.height) newHeight = (blah.height - centerY) * 2, newWidth = newHeight * 3/4;
-        regionData.width = newWidth;
-        regionData.height = newHeight;
-        regionData.left = centerX - newWidth / 2;
-        regionData.top = centerY - newHeight / 2;
-        updateRegion();
-    }
-}
-function regionTouchEnd(e) {
-    dragging = false;
-    resizing = false;
-    e.preventDefault();
-}
 
-// --- SEND dithered image to /file ---
-function sendDitheredImage() {
-    // Get dithered 300x400 image from overlay
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = 300;
-    tempCanvas.height = 400;
-    const tempCtx = tempCanvas.getContext('2d');
-    const scaleX = blah.naturalWidth / blah.width;
-    const scaleY = blah.naturalHeight / blah.height;
-    const sx = regionData.left * scaleX;
-    const sy = regionData.top * scaleY;
-    const sw = regionData.width * scaleX;
-    const sh = regionData.height * scaleY;
-    tempCtx.save();
-    tempCtx.translate(150, 200);
-    tempCtx.drawImage(blah, sx, sy, sw, sh, -150, -200, 300, 400);
-    tempCtx.restore();
-    dithering(tempCtx, 300, 400, 128, 3);
-    const bytes = canvas2bytes(tempCanvas, 'bw');
-    const byteArray = new Uint8Array(bytes);
-    const formData = new FormData();
-    formData.append('file', new Blob([byteArray], {type: 'application/octet-stream'}), 'dithered_300x400.bin');
-    fetch('/file', {
-        method: 'POST',
-        body: formData
-    }).then(resp => {
-        if (resp.ok) {
-            alert('Image uploaded!');
-            terminalClean();
+    function trapKeyPress() {
+        document.getElementById("command-text").addEventListener("keypress", (event) => {
+            if (event.code === "Enter") {
+                event.preventDefault();
+                document.getElementById("command-button").click();
+            }
+        });
+        document.addEventListener("keydown", (event) => {
+            if (document.activeElement && document.activeElement.id === 'command-text') {
+                if (event.code === "ArrowUp") {
+                    commandHistoryIdx--;
+                    if (commandHistoryIdx < 0)
+                        commandHistoryIdx = commandHistory.length > 0 ? commandHistory.length - 1 : 0;
+                    if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
+                        document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
+
+                } else if (event.code === "ArrowDown") {
+                    commandHistoryIdx++;
+                    if (commandHistoryIdx >= commandHistory.length)
+                        commandHistoryIdx = 0;
+                    if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
+                        document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
+                }
+            }
+        });
+    }
+
+    function onOpen(event) {
+        clearTimeout(connectTimeout);
+        terminalWrite("found portal try 'help' for configuration");
+        document.getElementById("command-button").disabled = false;
+        document.getElementById("command-text").disabled = false;
+    }
+
+    function onError(e) {
+        console.log("Error!", e);
+        websocket.close();
+    }
+
+    function onClose(e) {
+        console.log("connection closed.", e);
+    }
+
+    function onMessage(event) {
+        if (event.data == 'pong') {
+            clearTimeout(pingTimeout);
+            pingTimeout = false;
         } else {
-            alert('Upload failed');
+            terminalWrite(event.data);
         }
-    }).catch(() => alert('Upload failed'));
-}
+    }
+
+    function terminalWrite(raw) {
+        if (enableTimestamp) {
+            let now = new Date();
+            raw = "[" + now.toLocaleTimeString() + "] " + raw + "\n";
+        }
+        textArea.value += raw + "\n";
+        if (!enableFlowLock) {
+            textArea.scrollTop = textArea.scrollHeight;
+        }
+    }
+
+    function terminalClean() {
+        textArea.value = "";
+        textArea.scrollTop = textArea.scrollHeight;
+    }
+
+    function sendCommand() {
+        let cmd = document.getElementById("command-text").value;
+        console.log('send command: ', cmd);
+        websocket.send(cmd);
+        commandHistory.push(cmd);
+        console.log('history size: ', commandHistory.length);
+        if (commandHistory.length > 20) {
+            console.log('history cleanup');
+            commandHistory.splice(0, commandHistory.length - 20);
+            console.log('history size: ', commandHistory.length);
+        }
+        commandHistoryIdx = commandHistory.length;
+        document.getElementById("command-text").value = "";
+        localStorage.history = JSON.stringify(commandHistory);
+    }
+
+    setInterval(() => {
+        if (!pingTimeout && websocket.readyState == WebSocket.OPEN) {
+            pingTimeout = setTimeout(() => {
+                terminalWrite("Ping timeout.");
+                websocket.close();
+                initWebSocket();
+            }, 3000);
+            websocket.send("ping");
+        }
+    }, 2000);
+
+    window.addEventListener("DOMContentLoaded", function () {
+        initWebPage();
+    }, false);
 </script>
+
 </html>
