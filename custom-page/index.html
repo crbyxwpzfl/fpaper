@@ -536,6 +536,8 @@
             imgOverlayBg.style.display = 'flex';
             popupImage.onload = () => {
                 // scale image by orientation to avoid stretching
+                // also just max-heigth and max-width does not work since small images wont get scaled up to their max height/width
+                // object-fit: contain does not work since the ditthering then for some reason uses a stretched version of the image.
                 popupImage.style.removeProperty('max-width');
                 popupImage.style.removeProperty('max-height');
                 popupImage.style.removeProperty('width');
