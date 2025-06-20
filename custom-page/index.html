@@ -52,8 +52,9 @@
             border-radius: 1.5rem;
             overflow: visible;
             box-shadow: 0 0 32px 8px rgba(0,0,0,0.2);
-            max-width: 90vw;
-            max-height: 90vh;
+            /*max-width: 90vw;
+            height: 90vh;
+            object-fit: contain;*/
             display: flex;
             align-items: center;
             justify-content: center;
@@ -65,8 +66,11 @@
         }
         #popupImage {
             display: block;
-            max-width: 80vw;
-            max-height: 80vh;
+            max-width: 90vw;
+            /*max-height: 90vh;
+            width: auto;
+            height: auto;
+            object-fit: contain*/
             border-radius: 1.5rem;
             background: #fff;
         }
@@ -107,9 +111,13 @@
             /* Prevent scaling */
             transform: none !important;
         }
+
+        /* 
         @media (max-width: 600px) {
             #popupImage { max-width: 98vw; max-height: 60vh; }
         }
+        */
+
     </style>
 </head>
 <body>
@@ -527,6 +535,27 @@
             popupImage.style.display = 'block';
             imgOverlayBg.style.display = 'flex';
             popupImage.onload = () => {
+                // scale image by orientation to avoid stretching
+                popupImage.style.removeProperty('max-width');
+                popupImage.style.removeProperty('max-height');
+                popupImage.style.removeProperty('width');
+                popupImage.style.removeProperty('height');
+                imgOverlay.style.removeProperty('max-width');
+                imgOverlay.style.removeProperty('width');
+                imgOverlay.style.removeProperty('height');
+                imgOverlay.style.removeProperty('max-height');
+                if (popupImage.naturalWidth >= popupImage.naturalHeight) {
+                    popupImage.style.width = '90vw';
+                    popupImage.style.maxHeight = '90vh';
+                    imgOverlay.style.width = '90vw';
+                    imgOverlay.style.maxHeight = '90vh';
+                }
+                if (popupImage.naturalWidth < popupImage.naturalHeight) {
+                    popupImage.style.maxWidth = '90vw';
+                    popupImage.style.height = '90vh';
+                    imgOverlay.style.maxWidth = '90vw';
+                    imgOverlay.style.height = '90vh';
+                }
                 imgRect = popupImage.getBoundingClientRect();
                 const iw = popupImage.width, ih = popupImage.height;
                 let rw = iw * 0.5, rh = rw * 4/3;
