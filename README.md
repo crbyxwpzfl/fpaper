@@ -1,7 +1,11 @@
 #### https://github.com/javl/image2cpp - the dithering is so cool javl
 
+
+
 # fpaper
 
+
+TODO - in index.html make images open with constant width
 
 TODO - currently we use PartitionScheme min_spiffs form arduino default partitions
 ```
