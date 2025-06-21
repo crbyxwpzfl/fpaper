@@ -1,21 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-
-
-
-
-
-    // this is sonnets4 solution to the scaling issue. perhpas nicer but no rounden corners also 
-    // clicking outside the image is mor difficult now??? closes not every time when i click outisde underit
-
-
-
-
-
-
-
-
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <title>Web Console & Image Dither</title>
@@ -66,12 +51,10 @@
             background: none;
             border-radius: 1.5rem;
             overflow: visible;
-            /*box-shadow: 0 0 32px 8px rgba(0,0,0,0.2);*/
-            max-width: 90vw;
-            max-height: 90vh;
-            width: 90vw;
+            box-shadow: 0 0 32px 8px rgba(0,0,0,0.2);
+            /*max-width: 90vw;
             height: 90vh;
-            object-fit: contain;
+            object-fit: contain;*/
             display: flex;
             align-items: center;
             justify-content: center;
@@ -81,24 +64,15 @@
             display: inline-block;
             background: none;
         }
-        #imageShadow {
-            position: absolute;
-            border-radius: 1.5rem;
-            box-shadow: 0 0 32px 8px rgba(0,0,0,0.2);
-            pointer-events: none;
-            display: none;
-            z-index: -1;
-        }
         #popupImage {
             display: block;
             max-width: 90vw;
-            max-height: 90vh;
-            width: 90vw;
-            height: 90vh;
-            object-fit: contain;
+            /*max-height: 90vh;
+            width: auto;
+            height: auto;
+            object-fit: contain*/
             border-radius: 1.5rem;
-            /*box-shadow: 0 0 32px 8px rgba(0,0,0,0.2);*/
-            background: none;
+            background: #fff;
         }
         #region {
             position: absolute;
@@ -137,9 +111,13 @@
             /* Prevent scaling */
             transform: none !important;
         }
+
+        /* 
         @media (max-width: 600px) {
             #popupImage { max-width: 98vw; max-height: 60vh; }
         }
+        */
+
     </style>
 </head>
 <body>
@@ -173,7 +151,6 @@
     <div id="imgOverlayBg">
         <div id="imgOverlay">
             <div id="imgRegionContainer">
-                <div id="imageShadow"></div>
                 <img id="popupImage" src="#" alt="your image" style="display:none;" />
                 <canvas id="ditheredOverlay" width="300" height="400" style="display:none;"></canvas>
                 <div id="region" style="display:none;"></div>
@@ -544,7 +521,6 @@
     const imgOverlay = document.getElementById('imgOverlay');
     const imgRegionContainer = document.getElementById('imgRegionContainer');
     const popupImage = document.getElementById('popupImage');
-    const imageShadow = document.getElementById('imageShadow');
     const region = document.getElementById('region');
     const ditheredOverlay = document.getElementById('ditheredOverlay');
     const sendBtn = document.getElementById('sendBtn');
@@ -552,54 +528,6 @@
     let regionData = {left: 50, top: 50, width: 150, height: 200}; // default 3:4
     let imgRect = null;
     let lastTouchDist = null;
-    let actualImageDimensions = {width: 0, height: 0, offsetX: 0, offsetY: 0};
-    
-    function calculateActualImageDimensions() {
-        const containerWidth = popupImage.offsetWidth;
-        const containerHeight = popupImage.offsetHeight;
-        const naturalWidth = popupImage.naturalWidth;
-        const naturalHeight = popupImage.naturalHeight;
-        
-        const containerAspect = containerWidth / containerHeight;
-        const imageAspect = naturalWidth / naturalHeight;
-        
-        let displayWidth, displayHeight, offsetX, offsetY;
-        
-        if (imageAspect > containerAspect) {
-            // Image is wider, fit to width
-            displayWidth = containerWidth;
-            displayHeight = containerWidth / imageAspect;
-            offsetX = 0;
-            offsetY = (containerHeight - displayHeight) / 2;
-        } else {
-            // Image is taller, fit to height
-            displayHeight = containerHeight;
-            displayWidth = containerHeight * imageAspect;
-            offsetX = (containerWidth - displayWidth) / 2;
-            offsetY = 0;
-        }
-        
-        actualImageDimensions = {
-            width: displayWidth,
-            height: displayHeight,
-            offsetX: offsetX,
-            offsetY: offsetY
-        };
-        
-        // Update shadow position and size
-        updateImageShadow();
-    }
-    
-    function updateImageShadow() {
-        if (actualImageDimensions.width && actualImageDimensions.height) {
-            imageShadow.style.left = actualImageDimensions.offsetX + 'px';
-            imageShadow.style.top = actualImageDimensions.offsetY + 'px';
-            imageShadow.style.width = actualImageDimensions.width + 'px';
-            imageShadow.style.height = actualImageDimensions.height + 'px';
-            imageShadow.style.display = 'block';
-        }
-    }
-    
     function handleImageFile(evt) {
         const [file] = evt.target.files;
         if (file) {
@@ -607,30 +535,48 @@
             popupImage.style.display = 'block';
             imgOverlayBg.style.display = 'flex';
             popupImage.onload = () => {
-                // Wait for layout to complete
-                setTimeout(() => {
-                    calculateActualImageDimensions();
-                    const iw = actualImageDimensions.width;
-                    const ih = actualImageDimensions.height;
-                    let rw = iw * 0.5, rh = rw * 4/3;
-                    if (rh > ih) { rh = ih * 0.5; rw = rh * 3/4; }
-                    regionData = {
-                        left: actualImageDimensions.offsetX + (iw - rw) / 2,
-                        top: actualImageDimensions.offsetY + (ih - rh) / 2,
-                        width: rw,
-                        height: rh
-                    };
-                    region.style.display = 'block';
-                    ditheredOverlay.style.display = 'block';
-                    sendBtn.style.display = 'block';
-                    updateRegion();
-                }, 10);
+                // scale image by orientation to avoid stretching
+                // also just max-heigth and max-width does not work since small images wont get scaled up to their max height/width
+                // object-fit: contain does not work since the ditthering then for some reason uses a stretched version of the image.
+                popupImage.style.removeProperty('max-width');
+                popupImage.style.removeProperty('max-height');
+                popupImage.style.removeProperty('width');
+                popupImage.style.removeProperty('height');
+                imgOverlay.style.removeProperty('max-width');
+                imgOverlay.style.removeProperty('width');
+                imgOverlay.style.removeProperty('height');
+                imgOverlay.style.removeProperty('max-height');
+                if (popupImage.naturalWidth >= popupImage.naturalHeight) {
+                    popupImage.style.width = '90vw';
+                    popupImage.style.maxHeight = '90vh';
+                    imgOverlay.style.width = '90vw';
+                    imgOverlay.style.maxHeight = '90vh';
+                }
+                if (popupImage.naturalWidth < popupImage.naturalHeight) {
+                    popupImage.style.maxWidth = '90vw';
+                    popupImage.style.height = '90vh';
+                    imgOverlay.style.maxWidth = '90vw';
+                    imgOverlay.style.height = '90vh';
+                }
+                imgRect = popupImage.getBoundingClientRect();
+                const iw = popupImage.width, ih = popupImage.height;
+                let rw = iw * 0.5, rh = rw * 4/3;
+                if (rh > ih) { rh = ih * 0.5; rw = rh * 3/4; }
+                regionData = {
+                    left: (iw - rw) / 2,
+                    top: (ih - rh) / 2,
+                    width: rw,
+                    height: rh
+                };
+                region.style.display = 'block';
+                ditheredOverlay.style.display = 'block';
+                sendBtn.style.display = 'block';
+                updateRegion();
             };
         }
     }
     function updateRegion() {
-        if (!actualImageDimensions.width || !actualImageDimensions.height) return;
-        
+        if (!popupImage.width || !popupImage.height) return;
         region.style.left = regionData.left + 'px';
         region.style.top = regionData.top + 'px';
         region.style.width = regionData.width + 'px';
@@ -647,13 +593,12 @@
         sendBtn.style.top = (regionData.top + regionData.height - sendBtn.offsetHeight + 20 ) + 'px';
         sendBtn.style.display = 'block';
         if (popupImage.src && popupImage.complete && regionData.width > 0 && regionData.height > 0) {
-            // Calculate the source coordinates relative to the actual displayed image
-            const displayScale = popupImage.naturalWidth / actualImageDimensions.width;
-            const sx = (regionData.left - actualImageDimensions.offsetX) * displayScale;
-            const sy = (regionData.top - actualImageDimensions.offsetY) * displayScale;
-            const sw = regionData.width * displayScale;
-            const sh = regionData.height * displayScale;
-            
+            const scaleX = popupImage.naturalWidth / popupImage.width;
+            const scaleY = popupImage.naturalHeight / popupImage.height;
+            const sx = regionData.left * scaleX;
+            const sy = regionData.top * scaleY;
+            const sw = regionData.width * scaleX;
+            const sh = regionData.height * scaleY;
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = 300; tempCanvas.height = 400;
             const tempCtx = tempCanvas.getContext('2d');
@@ -676,8 +621,8 @@
         if (dragging && imgOverlayBg.style.display === 'flex') {
             let dx = e.clientX - startX;
             let dy = e.clientY - startY;
-            let newLeft = Math.max(actualImageDimensions.offsetX, Math.min(actualImageDimensions.offsetX + actualImageDimensions.width - regionData.width, startLeft + dx));
-            let newTop = Math.max(actualImageDimensions.offsetY, Math.min(actualImageDimensions.offsetY + actualImageDimensions.height - regionData.height, startTop + dy));
+            let newLeft = Math.max(0, Math.min(popupImage.width - regionData.width, startLeft + dx));
+            let newTop = Math.max(0, Math.min(popupImage.height - regionData.height, startTop + dy));
             regionData.left = newLeft;
             regionData.top = newTop;
             updateRegion();
@@ -695,18 +640,18 @@
         let newHeight = newWidth * 4/3;
         // Clamp to image size
         if (newWidth < 30 || newHeight < 40) return;
-        if (newWidth > actualImageDimensions.width) newWidth = actualImageDimensions.width, newHeight = newWidth * 4/3;
-        if (newHeight > actualImageDimensions.height) newHeight = actualImageDimensions.height, newWidth = newHeight * 3/4;
+        if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
+        if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
         // Calculate center before scaling
         let centerX = regionData.left + regionData.width / 2;
         let centerY = regionData.top + regionData.height / 2;
         // Move region to keep it inside image after scaling
         let newLeft = centerX - newWidth / 2;
         let newTop = centerY - newHeight / 2;
-        if (newLeft < actualImageDimensions.offsetX) newLeft = actualImageDimensions.offsetX;
-        if (newTop < actualImageDimensions.offsetY) newTop = actualImageDimensions.offsetY;
-        if (newLeft + newWidth > actualImageDimensions.offsetX + actualImageDimensions.width) newLeft = actualImageDimensions.offsetX + actualImageDimensions.width - newWidth;
-        if (newTop + newHeight > actualImageDimensions.offsetY + actualImageDimensions.height) newTop = actualImageDimensions.offsetY + actualImageDimensions.height - newHeight;
+        if (newLeft < 0) newLeft = 0;
+        if (newTop < 0) newTop = 0;
+        if (newLeft + newWidth > popupImage.width) newLeft = popupImage.width - newWidth;
+        if (newTop + newHeight > popupImage.height) newTop = popupImage.height - newHeight;
         regionData.width = newWidth;
         regionData.height = newHeight;
         regionData.left = newLeft;
@@ -736,8 +681,8 @@
         if (dragging && e.touches.length === 1) {
             let dx = e.touches[0].clientX - startX;
             let dy = e.touches[0].clientY - startY;
-            let newLeft = Math.max(actualImageDimensions.offsetX, Math.min(actualImageDimensions.offsetX + actualImageDimensions.width - regionData.width, startLeft + dx));
-            let newTop = Math.max(actualImageDimensions.offsetY, Math.min(actualImageDimensions.offsetY + actualImageDimensions.height - regionData.height, startTop + dy));
+            let newLeft = Math.max(0, Math.min(popupImage.width - regionData.width, startLeft + dx));
+            let newTop = Math.max(0, Math.min(popupImage.height - regionData.height, startTop + dy));
             regionData.left = newLeft;
             regionData.top = newTop;
             updateRegion();
@@ -750,16 +695,16 @@
             let newWidth = startWidth * scale;
             let newHeight = newWidth * 4/3;
             if (newWidth < 30 || newHeight < 40) return;
-            if (newWidth > actualImageDimensions.width) newWidth = actualImageDimensions.width, newHeight = newWidth * 4/3;
-            if (newHeight > actualImageDimensions.height) newHeight = actualImageDimensions.height, newWidth = newHeight * 3/4;
+            if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
+            if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
             let centerX = regionData.left + regionData.width / 2;
             let centerY = regionData.top + regionData.height / 2;
             let newLeft = centerX - newWidth / 2;
             let newTop = centerY - newHeight / 2;
-            if (newLeft < actualImageDimensions.offsetX) newLeft = actualImageDimensions.offsetX;
-            if (newTop < actualImageDimensions.offsetY) newTop = actualImageDimensions.offsetY;
-            if (newLeft + newWidth > actualImageDimensions.offsetX + actualImageDimensions.width) newLeft = actualImageDimensions.offsetX + actualImageDimensions.width - newWidth;
-            if (newTop + newHeight > actualImageDimensions.offsetY + actualImageDimensions.height) newTop = actualImageDimensions.offsetY + actualImageDimensions.height - newHeight;
+            if (newLeft < 0) newLeft = 0;
+            if (newTop < 0) newTop = 0;
+            if (newLeft + newWidth > popupImage.width) newLeft = popupImage.width - newWidth;
+            if (newTop + newHeight > popupImage.height) newTop = popupImage.height - newHeight;
             regionData.width = newWidth;
             regionData.height = newHeight;
             regionData.left = newLeft;
@@ -777,14 +722,12 @@
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = 300; tempCanvas.height = 400;
         const tempCtx = tempCanvas.getContext('2d');
-        
-        // Calculate the source coordinates relative to the actual displayed image
-        const displayScale = popupImage.naturalWidth / actualImageDimensions.width;
-        const sx = (regionData.left - actualImageDimensions.offsetX) * displayScale;
-        const sy = (regionData.top - actualImageDimensions.offsetY) * displayScale;
-        const sw = regionData.width * displayScale;
-        const sh = regionData.height * displayScale;
-        
+        const scaleX = popupImage.naturalWidth / popupImage.width;
+        const scaleY = popupImage.naturalHeight / popupImage.height;
+        const sx = regionData.left * scaleX;
+        const sy = regionData.top * scaleY;
+        const sw = regionData.width * scaleX;
+        const sh = regionData.height * scaleY;
         tempCtx.save();
         tempCtx.translate(150, 200);
         tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 300, 400);
@@ -809,7 +752,6 @@
         imgOverlayBg.style.display = 'none';
         popupImage.src = '#';
         popupImage.style.display = 'none';
-        imageShadow.style.display = 'none';
         region.style.display = 'none';
         ditheredOverlay.style.display = 'none';
         sendBtn.style.display = 'none';
