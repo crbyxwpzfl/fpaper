@@ -60,6 +60,9 @@ GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_4
 uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
 size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
 
+uint8_t* receivedImageBuffer = nullptr; // Pointer to store received image data
+size_t receivedImageSize = 0;           // Size of received image data
+
 void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
   if (index == 0) {
     // Allocate memory for the image buffer on the first chunk
@@ -185,7 +188,34 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   while (true) {
   if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
     xQueueReceive(sendmqttQueue, &buf, 0);    //  reads first word out of queue 
-    mqttClient.publish( prefs.getString("mqtop", "/finger").c_str() , 0, 0, (prefs.getString("publ", String(ESP.getEfuseMac()) ) + " says " + String(buf)).c_str() ); feedlog("sent " + String(buf), 50, 50, 50, 500, "debug");    //  sends 'publisher' says 'message' and pulses led white
+
+Serial.println("try to publ");
+bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
+Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
+
+Serial.println(buf);
+if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
+  // TODO only publish to our topic
+  if (imageBuffer && imageBufferOffset > 0) {
+    
+    Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
+    Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
+    
+    
+    //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
+    int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
+    Serial.println(size);
+    size_t testSize = min(size, (int)imageBufferOffset);
+    bool result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
+    Serial.printf("Publish result (first %zu bytes): %s\n", testSize, result ? "success" : "failed");
+
+    //mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, true);
+    Serial.println("did it");
+  } else {
+    Serial.println("eeeeeeee");
+  }
+}
+  
   }
   vTaskDelay(1000);    // just send every second
   }
@@ -196,7 +226,61 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 //PsychicMqttClient mqttClient;    //  commented so no redfinition error
 void initmqtt(){    //  handle incoming mqtt
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.emqx.io"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
-  mqttClient.onTopic( prefs.getString("mqtop", "/finger").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards do not work 'mqttClient.onTopic( "hard/uniquifier/69/peer/#", ....' or perhaps they do see 'https://github.com/theelims/PsychicMqttClient/issues/6#issue-2485407953'
+  mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
+       Serial.printf("Received message on topic: %s\n", topic);
+
+            // Check if this is binary image data (not text messages)
+      if (strstr(topic, "/fpaper/test") != NULL) {
+        // This is binary image data
+        Serial.printf("Received binary data on topic: %s\n", topic);
+        
+        // For binary data, we need to determine actual size differently
+        // Since strlen() stops at null bytes, let's assume 15KB for now
+        const size_t EXPECTED_IMAGE_SIZE = 15000; // 15KB
+        
+        // Print first few bytes to serial console
+        Serial.print("First bytes (hex): ");
+        for (int i = 0; i < min(16, (int)strlen(payload)); i++) {
+          Serial.printf("%02X ", (uint8_t)payload[i]);
+        }
+        Serial.println();
+        
+        // Allocate PSRAM buffer for received image
+        if (receivedImageBuffer) {
+          free(receivedImageBuffer); // Free previous buffer
+        }
+        
+        //size_t payloadSize = strlen(payload); // For binary data, you might need a different approach
+        //receivedImageBuffer = (uint8_t*)ps_malloc(payloadSize);
+        receivedImageBuffer = (uint8_t*)ps_malloc(EXPECTED_IMAGE_SIZE);
+        
+        if (receivedImageBuffer) {
+          // Copy binary data to PSRAM buffer
+          //memcpy(receivedImageBuffer, payload, payloadSize);
+          //receivedImageSize = payloadSize;
+
+          memcpy(receivedImageBuffer, payload, EXPECTED_IMAGE_SIZE);
+          receivedImageSize = EXPECTED_IMAGE_SIZE;
+          
+          Serial.printf("Stored %zu bytes in PSRAM buffer\n", receivedImageSize);
+          
+          // Optional: Display received image on e-paper
+          if (receivedImageSize >= IMAGE_SIZE) {
+            display.setFullWindow();
+            display.firstPage();
+            do {
+              display.fillScreen(GxEPD_BLACK);
+              display.drawBitmap(0, 0, receivedImageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
+            } while (display.nextPage());
+            display.hibernate();
+            Serial.println("Received image displayed on e-paper");
+          }
+        } else {
+          Serial.println("Failed to allocate PSRAM for received image");
+        }
+        return; // Skip text message processing
+      }
+
       if (strstr(payload, " says look here") != NULL) {
         String sender = String(payload).substring(0, strstr(payload, " says look here") - payload), peers = prefs.getString("peers", "");    //  peer always is before ' says' so subtracting the base pointer of buf pointer gives length of substring containing peer
         if ( ( peers.indexOf(sender) >= 0 || peers == "" ) && sender != prefs.getString("publ", String(ESP.getEfuseMac())) ) { xQueueSend(servoQueue, "top", 0); xQueueSend(sendmqttQueue, "shit", 0); }    //  when no peers set this moves servo with any sender but our self so we dont finger our self. alternative 'if (strstr(prefs.getString("peers").c_str(), sender.c_str()) != NULL)'
@@ -207,6 +291,19 @@ void initmqtt(){    //  handle incoming mqtt
       }
       feedlog("mqtt recived " + String(payload), 0, 0, 0, 0, "debug");
   });
+
+    // only listen to everything but our self 
+
+  // Get the eFuse MAC as a string (12 hex digits, uppercase, no delimiters)
+  char macStr[13]; // 12 hex digits + null terminator
+  snprintf(macStr, sizeof(macStr), "%012llX", ESP.getEfuseMac());
+  // Build the topic string "/fpaper/<efusemac>"
+  String myTopic = String("/fpaper/") + macStr;
+  // Unsubscribe from "/fpaper/<efusemac>"
+  mqttClient.unsubscribe(myTopic.c_str());
+  
+  //mqttClient.unsubscribe("/fpaper/" + String(ESP.getEfuseMac()));
+
   xTaskCreate( sendmqttTas, "sendmqttTas", 2048, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task
   mqttClient.connect();
 }
@@ -264,7 +361,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
          " user 'you'          sets your peer name \n"
          " peer 'others'       adds peer to '" + prefs.getString("peers", "N.A.") + "' \n"
          " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.emqx.io") + "' \n"
-         " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/finger") + "' \n"
+         " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/fpaper") + "' \n"
 
          "\nservo config. please take finger off before \n"
          " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
@@ -349,7 +446,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  not able to connect to ssid from nvs so fall back to ap
     WiFi.mode(WIFI_AP);
     WiFi.softAP("fpaper", "");
-    feedlog(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap finger up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
+    feedlog(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
     xTaskCreate( dnsServTas, "dnsServ", 2048, NULL, 1, &dnsServHandle );    //  begin dns serv 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
   }
   if (WiFi.waitForConnectResult() == WL_CONNECTED) {    //  all good connected to ssid from nvs
@@ -376,7 +473,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
   server.begin();
-  if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to finger.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+  if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
 }
 
 
@@ -411,6 +508,12 @@ void setup() {
     Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
   }
   
+
+
+  if (receivedImageBuffer) {
+    free(receivedImageBuffer);
+    receivedImageBuffer = nullptr;
+  }
   
 
   //NEW
