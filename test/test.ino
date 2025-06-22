@@ -1,4 +1,3 @@
-
 // to implement slash fix
 // implement mqtt wildcard see https://github.com/theelims/PsychicMqttClient/issues/6#issuecomment-2530154457
 // primary peer one click
@@ -43,8 +42,13 @@
 #include <MycilaWebSerial.h>  // https://github.com/mathieucarbou/MycilaWebSerial.git customize portal 'cd library/dirs/MycilaWebSerial/portal/' customize html delete 'library/dirs/MycilaWebSerial/src/MycilaWebSerialPage.h' regenerate it 'pnpm i' 'pnpm build' node and pnpm is required
 #include "InterruptButton.h"    //  https://github.com/rwmingis/InterruptButton.git
 #include <PsychicMqttClient.h>    //  https://github.com/theelims/PsychicMqttClient.git
-#include <ChaChaPoly.h>    // https://github.com/rweather/arduinolibs.git
 
+
+
+#include <ChaChaPoly.h>    // https://github.com/rweather/arduinolibs.git
+#include <base64.h>    //
+#include <libb64/cencode.h>
+#include <libb64/cdecode.h>
 
 //#include <Adafruit_NeoPixel.h>    //  https://github.com/adafruit/Adafruit_NeoPixel.git
 
@@ -59,6 +63,18 @@ GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_4
 #define IMAGE_WIDTH 400
 #define IMAGE_HEIGHT 300
 #define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
+
+
+ChaChaPoly chachapoly;
+uint8_t iv[12] =  {0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 
+                   0x47, 0x47, 0x47, 0x47};                          // 12*8 so 96 bit iv
+uint8_t key[32] = {0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+                   0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+                   0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+                   0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f};  // 32*8 so 256 bit key
+uint8_t tag[16] = {}; // 16*8 so 128 bit tag for chachapoly
+uint8_t authdata[12] = {0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3,
+                        0xc4, 0xc5, 0xc6, 0xc7};  // some authdata for chachapoly
 
 uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
 size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
@@ -109,6 +125,54 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
 
     display.hibernate();
     Serial.println("Image displayed on e-paper");
+
+
+    // Allocate buffer for encrypted data
+    if (receivedImageBuffer) {
+      free(receivedImageBuffer);
+    }
+    receivedImageBuffer = (uint8_t*)ps_malloc(imageBufferOffset);
+    
+    if (!receivedImageBuffer) {
+      Serial.println("Failed to allocate memory for encrypted image buffer");
+      return;
+    }
+
+
+    // encrypt image data
+    chachapoly.setIV(iv, 12);
+    chachapoly.setKey(key, 32);
+    chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+    chachapoly.encrypt(receivedImageBuffer, imageBuffer, imageBufferOffset);    //  encrypt image buffer with chachapoly and overwrite it with cypher data
+    chachapoly.computeTag(tag, 16);
+    chachapoly.clear();
+
+    Serial.print("encrypted");
+
+    // decrypt image data
+    chachapoly.setIV(iv, 12);
+    chachapoly.setKey(key, 32);
+    chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+    chachapoly.decrypt(receivedImageBuffer, receivedImageBuffer, imageBufferOffset);    //  overwrite received image buffer with decrypted data
+    bool check = chachapoly.checkTag(tag, 16);
+    Serial.print("Tag check result: "); Serial.println(check);
+    chachapoly.clear();
+    
+    if (!check) {
+      Serial.println("Tag check failed, image data may be corrupted");
+      //return;  // skip displaying the image
+    }  
+
+    display.setFullWindow();
+    display.firstPage();
+    do {
+      display.fillScreen(GxEPD_BLACK);
+      display.drawBitmap(0, 0, receivedImageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
+    } while (display.nextPage());
+    display.hibernate();
+    Serial.println("displayed decrypted image on e-paper");
+
+
   }
 }
 //END
@@ -180,16 +244,7 @@ void servoTas(void *parameter) {    //  this handles servo movement
 }
 
 
-ChaChaPoly chachapoly;
-uint8_t iv[12] =  {0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 
-                   0x44, 0x45, 0x46, 0x47};                          // 12*8 so 96 bit iv
-uint8_t key[32] = {0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
-                   0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
-                   0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
-                   0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f};  // 32*8 so 256 bit key
-uint8_t tag[16] = {}; // 16*8 so 128 bit tag for chachapoly
-uint8_t authdata[12] = {0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3,
-                        0xc4, 0xc5, 0xc6, 0xc7};  // some authdata for chachapoly
+
 
 //Preferences prefs;    //  commented so no redfinition error
 PsychicMqttClient mqttClient;    //  first declaration of mqttClient
@@ -203,43 +258,55 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
     xQueueReceive(sendmqttQueue, &buf, 0);    //  reads first word out of queue 
 
-Serial.println("try to publ");
+    Serial.println("try to publ");
+    Serial.println(buf);
 
-Serial.println(buf);
-if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
-  // TODO only publish to our topic
-  if (imageBuffer && imageBufferOffset > 0) {
-    
-    Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
-    Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
-    
+    if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
+      // TODO only publish to our topic
+      if (imageBuffer && imageBufferOffset > 0) {
+        
+        Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
+        Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
+        
 
-    
-    //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
-    int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
-    Serial.println(size);
-    size_t testSize = min(size, (int)imageBufferOffset);
-    
-    // encrypt image data
-    chachapoly.setIV(iv, 12);
-    chachapoly.setKey(key, 32);
-    chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
-    chachapoly.encrypt(imageBuffer, imageBuffer, imageBufferOffset);    //  encrypt image buffer with chachapoly and overwrite it with cypher data
-    chachapoly.computeTag(tag, 16);
-    chachapoly.clear();
+        
+        // encrypt image data
+        chachapoly.setIV(iv, 12);
+        chachapoly.setKey(key, 32);
+        chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+        chachapoly.encrypt(imageBuffer, imageBuffer, imageBufferOffset);    //  encrypt image buffer with chachapoly and overwrite it with cypher data
+        chachapoly.computeTag(tag, 16);
+        chachapoly.clear();
 
-
-    int result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
-    Serial.print("publish result"); Serial.println(result);
-    //mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, true);
-    Serial.println("did it");
-  } else {
-    Serial.println("eeeeeeee");
-  }
-} else {
-  bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
-  Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
-} 
+        // Base64 encode the encrypted data
+        // Using the ESP32's built-in Base64 library
+        size_t encodedLen = base64_encode_expected_len(imageBufferOffset);
+        char* base64Buffer = (char*)ps_malloc(encodedLen + 1); // +1 for null terminator
+        
+        if (base64Buffer) {
+          size_t outputLength = base64_encode_chars((char*)imageBuffer, imageBufferOffset, base64Buffer);
+          base64Buffer[outputLength] = 0; // Ensure null termination
+          
+          Serial.printf("Base64 encoded length: %zu\n", outputLength);
+          
+          // Publish the base64 encoded data
+          int result = mqttClient.publish("/fpaper/test", 0, 0, base64Buffer);
+          Serial.printf("Publish result: %s (%d)\n", result ? "success" : "failed", result);
+          
+          // Free the buffer after publishing
+          free(base64Buffer);
+        } else {
+          Serial.println("Failed to allocate memory for base64 encoding");
+        }
+        
+        Serial.println("MQTT publish completed");
+      } else {
+        Serial.println("No image data available to publish");
+      }
+    } else {
+      bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
+      Serial.printf("Publish result hello world: %s\n", result1 ? "success" : "failed");
+    } 
   
   }
   vTaskDelay(1000);    // just send every second
@@ -255,52 +322,39 @@ void initmqtt(){    //  handle incoming mqtt
 
     Serial.printf("Received message on topic: %s\n", topic);
 
-            // Check if this is binary image data (not text messages)
+      // Check if this is binary image data (not text messages)
       if (strstr(topic, "/fpaper/test") != NULL) {
         // This is binary image data
-        Serial.printf("Received binary data on topic: %s\n", topic);
+        Serial.printf("Received base64 encoded data on topic: %s\n", topic);
         
-        // strlen() does not work with encrypted image data apparently
-        // For binary data, we need to determine actual size differently
-        // Since strlen() stops at null bytes, let's assume 15KB for now
-        const size_t EXPECTED_IMAGE_SIZE = 15000; // 15KB
+        // Get the length of the base64 encoded data
+        size_t payloadLen = strlen(payload);
+        Serial.printf("Base64 encoded payload length: %zu\n", payloadLen);
         
-        // Print first few bytes to serial console
-        Serial.print("First bytes (hex): ");
-        for (int i = 0; i < min(16, (int)strlen(payload)); i++) {
-          Serial.printf("%02X ", (uint8_t)payload[i]);
-        }
-        Serial.println();
+        // Calculate the expected length of the decoded data
+        size_t decodedLen = base64_decode_expected_len(payloadLen);
         
         // Allocate PSRAM buffer for received image
         if (receivedImageBuffer) {
           free(receivedImageBuffer); // Free previous buffer
         }
         
-        //size_t payloadSize = strlen(payload); // For binary data, you might need a different approach
-        //receivedImageBuffer = (uint8_t*)ps_malloc(payloadSize);
-        receivedImageBuffer = (uint8_t*)ps_malloc(EXPECTED_IMAGE_SIZE);
+        receivedImageBuffer = (uint8_t*)ps_malloc(decodedLen);
         
         if (receivedImageBuffer) {
-          // Copy binary data to PSRAM buffer
-          //memcpy(receivedImageBuffer, payload, payloadSize);
-          //receivedImageSize = payloadSize;
-
-          memcpy(receivedImageBuffer, payload, EXPECTED_IMAGE_SIZE);
-          receivedImageSize = EXPECTED_IMAGE_SIZE;
+          // Decode base64 payload into the buffer
+          receivedImageSize = base64_decode_chars(payload, payloadLen, (char*)receivedImageBuffer);
           
-          Serial.printf("Stored %zu bytes in PSRAM buffer\n", receivedImageSize);
+          Serial.printf("Decoded %zu bytes from base64\n", receivedImageSize);
           
-          // Optional: Display received image on e-paper
-          if (receivedImageSize >= IMAGE_SIZE) {
-
+          if (receivedImageSize > 0) {
             // decrypt image data
             chachapoly.setIV(iv, 12);
             chachapoly.setKey(key, 32);
             chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
             chachapoly.decrypt(receivedImageBuffer, receivedImageBuffer, receivedImageSize);    //  overwrite received image buffer with decrypted data
             bool check = chachapoly.checkTag(tag, 16);
-            Serial.print("Tag check result: "); Serial.println(check);
+            Serial.printf("Tag check result: %s\n", check ? "success" : "failed");
             chachapoly.clear();
             
             if (!check) {
@@ -308,6 +362,7 @@ void initmqtt(){    //  handle incoming mqtt
               //return;  // skip displaying the image
             }  
 
+            // Display the image on the e-paper
             display.setFullWindow();
             display.firstPage();
             do {
@@ -316,6 +371,8 @@ void initmqtt(){    //  handle incoming mqtt
             } while (display.nextPage());
             display.hibernate();
             Serial.println("Received image displayed on e-paper");
+          } else {
+            Serial.println("Base64 decoding failed");
           }
         } else {
           Serial.println("Failed to allocate PSRAM for received image");
