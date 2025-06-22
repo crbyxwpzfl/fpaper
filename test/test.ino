@@ -43,6 +43,9 @@
 #include <MycilaWebSerial.h>  // https://github.com/mathieucarbou/MycilaWebSerial.git customize portal 'cd library/dirs/MycilaWebSerial/portal/' customize html delete 'library/dirs/MycilaWebSerial/src/MycilaWebSerialPage.h' regenerate it 'pnpm i' 'pnpm build' node and pnpm is required
 #include "InterruptButton.h"    //  https://github.com/rwmingis/InterruptButton.git
 #include <PsychicMqttClient.h>    //  https://github.com/theelims/PsychicMqttClient.git
+#include <ChaChaPoly.h>    // https://github.com/rweather/arduinolibs.git
+
+
 //#include <Adafruit_NeoPixel.h>    //  https://github.com/adafruit/Adafruit_NeoPixel.git
 
 
@@ -177,6 +180,17 @@ void servoTas(void *parameter) {    //  this handles servo movement
 }
 
 
+ChaChaPoly chachapoly;
+uint8_t iv[12] =  {0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 
+                   0x44, 0x45, 0x46, 0x47};                          // 12*8 so 96 bit iv
+uint8_t key[32] = {0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+                   0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+                   0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+                   0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f};  // 32*8 so 256 bit key
+uint8_t tag[16] = {}; // 16*8 so 128 bit tag for chachapoly
+uint8_t authdata[12] = {0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3,
+                        0xc4, 0xc5, 0xc6, 0xc7};  // some authdata for chachapoly
+
 //Preferences prefs;    //  commented so no redfinition error
 PsychicMqttClient mqttClient;    //  first declaration of mqttClient
 TaskHandle_t sendmqttHandle;
@@ -190,8 +204,6 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     xQueueReceive(sendmqttQueue, &buf, 0);    //  reads first word out of queue 
 
 Serial.println("try to publ");
-bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
-Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
 
 Serial.println(buf);
 if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
@@ -201,20 +213,33 @@ if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when 
     Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
     Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
     
+
     
     //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
     int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
     Serial.println(size);
     size_t testSize = min(size, (int)imageBufferOffset);
-    bool result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
-    Serial.printf("Publish result (first %zu bytes): %s\n", testSize, result ? "success" : "failed");
+    
+    // encrypt image data
+    chachapoly.setIV(iv, 12);
+    chachapoly.setKey(key, 32);
+    chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+    chachapoly.encrypt(imageBuffer, imageBuffer, imageBufferOffset);    //  encrypt image buffer with chachapoly and overwrite it with cypher data
+    chachapoly.computeTag(tag, 16);
+    chachapoly.clear();
 
+
+    int result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
+    Serial.print("publish result"); Serial.println(result);
     //mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, true);
     Serial.println("did it");
   } else {
     Serial.println("eeeeeeee");
   }
-}
+} else {
+  bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
+  Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
+} 
   
   }
   vTaskDelay(1000);    // just send every second
@@ -227,13 +252,15 @@ if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when 
 void initmqtt(){    //  handle incoming mqtt
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.emqx.io"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
-       Serial.printf("Received message on topic: %s\n", topic);
+
+    Serial.printf("Received message on topic: %s\n", topic);
 
             // Check if this is binary image data (not text messages)
       if (strstr(topic, "/fpaper/test") != NULL) {
         // This is binary image data
         Serial.printf("Received binary data on topic: %s\n", topic);
         
+        // strlen() does not work with encrypted image data apparently
         // For binary data, we need to determine actual size differently
         // Since strlen() stops at null bytes, let's assume 15KB for now
         const size_t EXPECTED_IMAGE_SIZE = 15000; // 15KB
@@ -266,6 +293,21 @@ void initmqtt(){    //  handle incoming mqtt
           
           // Optional: Display received image on e-paper
           if (receivedImageSize >= IMAGE_SIZE) {
+
+            // decrypt image data
+            chachapoly.setIV(iv, 12);
+            chachapoly.setKey(key, 32);
+            chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+            chachapoly.decrypt(receivedImageBuffer, receivedImageBuffer, receivedImageSize);    //  overwrite received image buffer with decrypted data
+            bool check = chachapoly.checkTag(tag, 16);
+            Serial.print("Tag check result: "); Serial.println(check);
+            chachapoly.clear();
+            
+            if (!check) {
+              Serial.println("Tag check failed, image data may be corrupted");
+              //return;  // skip displaying the image
+            }  
+
             display.setFullWindow();
             display.firstPage();
             do {
