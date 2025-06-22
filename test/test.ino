@@ -46,7 +46,7 @@
 
 
 #include <ChaChaPoly.h>    // https://github.com/rweather/arduinolibs.git
-#include <base64.h>    //
+//#include <base64.h>    // this for some reason only has encode and not decode so I use libb64 instead 
 #include <libb64/cencode.h>
 #include <libb64/cdecode.h>
 
