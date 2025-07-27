@@ -437,25 +437,47 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
 
     /*
-    
-    Mqtt subscribe to every nvsalias 
 
 
-
-    Next: store uploaded foto either in nvs or buffer
-
-    
     while uploading/choosing foto 
-      ->  dont show incoming fotos while uploading/choosing foto just store them in nvs
-      ->  start pinging every nvsalias 
+      (->  dont show incoming fotos while uploading/choosing foto just store them in nvs)
+      ->  start pinging every nvsalias for their profile picture
+        -> upload complete
+          -> show uploaded foto
+          -> exit with set personal profile picture command
+          -> longpress cycles through profile fotos of pongs and own profile foto
+          -> short click sends foto to profile picture with corosponding encryption or on own profile picture sets it to local display
+     (-> exit unsresponsive state when user exits without uploading a foto)
+ 
 
+    while not uploading/choosing foto
+      ->  responde to pings with own profile picture
+           -> move servo and when reciving a image and show image (flash sender profile picture)
+
+      ->  when recieving a wave
+          -> move servo and flash profile picture of sender
+
+      ->  short click sends short wave to current picture
+      ->  long press cycles through latest image of each peer (flash profile picture of sender on change)
+
+
+    
+    
+    ->  store most recent uploaded foto either in buffer (or nvs)
+
+    ->  Mqtt subscribe to every nvsalias
+    
     ->  add command to set current photo as profile picture 
-    ->  
     
+    ->  each nvsalias has to have these nvs: latest photo, profile picture, encryption hkdf , (hash of profile foto)
     
+    ->  local profile has to have these nvs: latest photo, profile picture, (hash of profile foto)
     
-    
-    
+    (->  How do i hash the profile foto and only send profile foto on change?)
+
+    (-> posebilety to delet specific peer and all its related data)
+
+    (->  establish show task with queue to build corret seqence when pressing the button)
     */
 
 
