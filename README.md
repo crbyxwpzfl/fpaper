@@ -7,7 +7,21 @@
 
 TODO - in index.html make images open with constant width
 
-TODO - currently we use PartitionScheme min_spiffs form arduino default partitions
+this is the current custom partition no spiffs!!
+
+```
+| Type | Sub |  Offset  |   Size   |       Label      | Size (MB) |
+| ---- | --- | -------- | -------- | ---------------- | --------- |
+|  01  | 02  | 0x009000 | 0x200000 | nvs              | 2.0 MB    |
+|  01  | 00  | 0x209000 | 0x002000 | otadata          | 0.008 MB  |
+|  00  | 10  | 0x210000 | 0x200000 | app0             | 2.0 MB    |
+|  00  | 11  | 0x410000 | 0x200000 | app1             | 2.0 MB    |
+|  01  | 03  | 0x610000 | 0x010000 | coredump         | 0.0625 MB |
+
+-- total ~6.07/8 MB (~1.93 MB free)
+```
+
+previously we had minispiffs
 ```
 Label       Offset     Size (hex)   Size (bytes)    Size (KB)   Size (MB)
 nvs         0x009000   0x005000     20,480          20.0        0.0195
@@ -16,9 +30,7 @@ app0        0x010000   0x1E0000     1,966,080       1,920.0     1.875
 app1        0x1F0000   0x1E0000     1,966,080       1,920.0     1.875
 spiffs      0x3D0000   0x020000     131,072         128.0       0.125
 coredump    0x3F0000   0x010000     65,536          64.0        0.0625
-```
-but ESP32-S3-WROOM-1-N8R8 has more to offer with custom partitions perhaps
-```
+
 Region          Start       End         Size (bytes)    Size (MB)
 Bootloader      0x0000      0x8000      32,768          0.03125
 Partition Table 0x8000      0x9000      4,096           0.0039
@@ -61,6 +73,45 @@ find board fqbn
 ```
 arduino-cli board search ESP32S3 Dev Module
 ```
+
+check board
+```
+arduino-cli board details -b esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M
+```
+
+arduino-cli compile -v \
+  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
+  --build-property build.extra_flags="-DPARTITION_TABLE_CSV./partitions.csv" \
+  --build-path ./firmware
+
+
+arduino-cli board details -b \
+  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
+  --build-property build.extra_flags="-DPARTITION_TABLE_CSV./partitions.csv" \
+  --build-path ./firmware
+
+
+arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
+
+
+
+
+arduino-cli compile -v \
+  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
+  --build-property compiler.cpp.extra_flags="-DPARTITION_TABLE_CSV=\\\"/workspaces/fpaper/test/partitions.csv\\\"" \
+  --build-path ./firmware \
+  /workspaces/fpaper/test
+
+
+arduino-cli compile -v \
+  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
+  --build-property compiler.cpp.extra_flags="-DPARTITION_TABLE_CSV=\\\"./partitions.csv\\\"" \
+  --build-path ./firmware
+
+
+
+
+
 
 compile with
 ```
