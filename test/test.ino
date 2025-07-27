@@ -43,7 +43,16 @@
 #include <MycilaWebSerial.h>  // https://github.com/mathieucarbou/MycilaWebSerial.git customize portal 'cd library/dirs/MycilaWebSerial/portal/' customize html delete 'library/dirs/MycilaWebSerial/src/MycilaWebSerialPage.h' regenerate it 'pnpm i' 'pnpm build' node and pnpm is required
 #include "InterruptButton.h"    //  https://github.com/rwmingis/InterruptButton.git
 #include <PsychicMqttClient.h>    //  https://github.com/theelims/PsychicMqttClient.git
-//#include <Adafruit_NeoPixel.h>    //  https://github.com/adafruit/Adafruit_NeoPixel.git
+
+
+#include <ChaChaPoly.h>    // https://github.com/rweather/arduinolibs.git
+#include <SHA256.h>
+#include <HKDF.h>
+
+// Output buffers for hkdf test
+uint8_t chachaKey[32];      // 256-bit key for ChaCha20Poly1305
+uint8_t mqttKeyBytes[16];   // Raw bytes for MQTT topic derivation
+    
 
 
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
@@ -111,7 +120,8 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
 
     size_t imageSize = prefs.getBytesLength("testimage");
     if (imageSize > 0) {
-        uint8_t* prefsImageBuffer = (uint8_t*)malloc(imageSize);
+        //uint8_t* prefsImageBuffer = (uint8_t*)malloc(imageSize);
+        static uint8_t prefsImageBuffer[15000];  // No malloc/free needed
         size_t bytesRead = prefs.getBytes("testimage", prefsImageBuffer, imageSize);
 
         Serial.printf("Image read! Size: %d bytes\n", bytesRead);
@@ -126,7 +136,7 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
         } while (display.nextPage());
         // Use your image data here
         
-        free(prefsImageBuffer);
+        //free(prefsImageBuffer);
     }
 
     display.hibernate();
@@ -416,8 +426,54 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("user ") == 0 ) {
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
-  if ( msg.indexOf("peer ") == 0 ) {
-    prefs.putString("peers", prefs.getString("peers", "") + msg.substring(4) ); feedlog("added peer '" + msg.substring(5) + "'"); return;
+  if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
+    if (msg.substring(5).indexOf(" ") >= 0) { feedlog("no spaces \n"); return; }    //  this is to prevent spaces in peer names
+    if (msg.substring(5).length() > 15) { feedlog("secret too long \n"); return; }
+    prefs.putString("peers", prefs.getString("peers", "") + msg.substring(4) ); feedlog("added peer '" + msg.substring(5) + "'"); 
+    
+    // Store the secret in a stable String to avoid pointer issues
+    String secretString = msg.substring(5);
+    const char* masterSecret = secretString.c_str();
+    size_t secretLength = secretString.length();
+    
+    // Debug: print the actual secret being used
+    feedlog("using secret: '" + secretString + "' (length: " + String(secretLength) + ")\n");
+
+    // Derive ChaCha20Poly1305 key (256-bit)
+    hkdf<SHA256>(
+        chachaKey, sizeof(chachaKey),           // output buffer, 32 bytes
+        (const uint8_t*)masterSecret, secretLength,  // input key material
+        nullptr, 0,                             // No salt
+        "encryption-key", strlen("encryption-key")  // info/context
+    );
+    // Print the derived chachaKey as hex bytes
+    String chachaKeyHex;
+    for (size_t i = 0; i < sizeof(chachaKey); i++) {
+      if (chachaKey[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
+      chachaKeyHex += String(chachaKey[i], HEX);
+      if (i < sizeof(chachaKey) - 1) chachaKeyHex += " ";
+    }
+    feedlog("chacha key derived (hex): " + chachaKeyHex + "\n");
+    
+    // Derive raw bytes for MQTT topic (128-bit)
+    hkdf<SHA256>(
+        mqttKeyBytes, sizeof(mqttKeyBytes),     // output buffer, 16 bytes
+        (const uint8_t*)masterSecret, secretLength,  // input key material
+        nullptr, 0,                             // No salt
+        "mqtt-topic", strlen("mqtt-topic")      // info/context
+    );
+
+    const char* chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    String topic = "device/";
+    
+    // Map bytes to valid alphanumeric characters
+    for (size_t i = 0; i < sizeof(mqttKeyBytes) && i < 10; i++) {
+        topic += chars[mqttKeyBytes[i] % 62]; // 62 = length of chars array
+    }
+
+    feedlog("mqtt topic derived: " + topic + "\n");
+
+    return;
   }
   if ( msg.indexOf("ssid ") == 0 ) {
     prefs.putString("ssid", msg.substring(5)); feedlog("ssid set to '" + msg.substring(5) + "'\n"); return;
