@@ -53,6 +53,7 @@ GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_4
 
 
 //NEW
+Preferences prefs;    //  first declaration of preferences as perfs
 #define IMAGE_WIDTH 400
 #define IMAGE_HEIGHT 300
 #define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
@@ -96,13 +97,37 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
     Serial.printf("Upload complete: %s, %zu bytes received\n", filename.c_str(), imageBufferOffset);
     //request->send(200, "text/plain", "Image upload complete");
 
-    // Display the image on the e-paper display
-    display.setFullWindow();
-    display.firstPage();
-    do {
-      display.fillScreen(GxEPD_BLACK);
-      display.drawBitmap(0, 0, imageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
-    } while (display.nextPage());
+
+
+    size_t bytesWritten = prefs.putBytes("testimage", imageBuffer, imageBufferOffset);
+
+    if (bytesWritten == imageBufferOffset) {
+        Serial.printf("Image stored successfully! Size: %d bytes\n", imageBufferOffset);
+    } else {
+        Serial.printf("Write failed! Expected: %d, Written: %d\n", imageBufferOffset, bytesWritten);
+    }
+
+
+
+    size_t imageSize = prefs.getBytesLength("testimage");
+    if (imageSize > 0) {
+        uint8_t* prefsImageBuffer = (uint8_t*)malloc(imageSize);
+        size_t bytesRead = prefs.getBytes("testimage", prefsImageBuffer, imageSize);
+
+        Serial.printf("Image read! Size: %d bytes\n", bytesRead);
+
+
+        // Display the image on the e-paper display
+        display.setFullWindow();
+        display.firstPage();
+        do {
+          display.fillScreen(GxEPD_BLACK);
+          display.drawBitmap(0, 0, prefsImageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
+        } while (display.nextPage());
+        // Use your image data here
+        
+        free(prefsImageBuffer);
+    }
 
     display.hibernate();
     Serial.println("Image displayed on e-paper");
@@ -147,7 +172,7 @@ void ledTas(void *parameter) {    //  this handles led user feedback
 
 
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
-Preferences prefs;    //  first declaration of preferences as perfs
+//Preferences prefs;    //  commented so no redfinition error
 void feedlog(String text, int r = 0, int g = 0, int b = 0, int t = 0, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
   if (r != 0 || g != 0 || b != 0 || t != 0) { struct ledfeedback{ int r; int g; int b; int t; }; } // no led feedback! for now ledfeedback ledc = {r, g, b, t}; xQueueSend(ledQueue, &ledc, 0); }    //  send led color to queue
   if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
@@ -507,7 +532,7 @@ void setup() {
     Serial.printf("Total PSRAM: %d bytes\n", ESP.getPsramSize());
     Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
   }
-  
+ 
 
 
   if (receivedImageBuffer) {
@@ -522,7 +547,6 @@ void setup() {
     imageBuffer = nullptr;
   }
   //END
-
 
 
 
