@@ -389,7 +389,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
                                 
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
          " user 'you'          sets your peer name \n"
-         " peer 'others'       adds peer to '" + prefs.getString("peers", " N.A.").substring(1) + "' \n"
+         " peer 'others'       adds peer to '" + prefs.getString("peers", " N.A.") + "' \n"
          " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.emqx.io") + "' \n"
          " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/fpaper") + "' \n"
 
@@ -429,13 +429,42 @@ void recv( String msg ){    //  this uses string likely char array is better see
     String nvsalias = ""; for (size_t i = 0; i < 15; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
     }
-
-    prefs.putString("peers", nvsalias + prefs.getString("peers", "")); feedlog("added secret '" + msg.substring(5) + "' under alias '" + nvsalias + "'");
+     
+    String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
     prefs.putBytes(nvsalias.c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsalias'
-    
+    feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'");
 
 
+
+    /*
     
+    Mqtt subscribe to every nvsalias 
+
+
+
+    Next: store uploaded foto either in nvs or buffer
+
+    
+    while uploading/choosing foto 
+      ->  dont show incoming fotos while uploading/choosing foto just store them in nvs
+      ->  start pinging every nvsalias 
+
+    ->  add command to set current photo as profile picture 
+    ->  
+    
+    
+    
+    
+    
+    */
+
+
+
+
+
+
+
+
     /* -- debug helper to print hkdf result in hex TODO remove this
     String chachaKeyHex;
     for (size_t i = 0; i < sizeof(hkdfbuff); i++) {
