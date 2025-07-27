@@ -49,11 +49,6 @@
 #include <SHA256.h>
 #include <HKDF.h>
 
-// Output buffers for hkdf test
-uint8_t chachaKey[32];      // 256-bit key for ChaCha20Poly1305
-uint8_t mqttKeyBytes[16];   // Raw bytes for MQTT topic derivation
-    
-
 
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
@@ -235,8 +230,8 @@ if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when 
     
     Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
     Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
-    
-    
+  
+ 
     //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
     int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
     Serial.println(size);
@@ -394,7 +389,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
                                 
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
          " user 'you'          sets your peer name \n"
-         " peer 'others'       adds peer to '" + prefs.getString("peers", "N.A.") + "' \n"
+         " peer 'others'       adds peer to '" + prefs.getString("peers", " N.A.").substring(1) + "' \n"
          " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.emqx.io") + "' \n"
          " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/fpaper") + "' \n"
 
@@ -427,51 +422,40 @@ void recv( String msg ){    //  this uses string likely char array is better see
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
-    if (msg.substring(5).indexOf(" ") >= 0) { feedlog("no spaces \n"); return; }    //  this is to prevent spaces in peer names
-    if (msg.substring(5).length() > 15) { feedlog("secret too long \n"); return; }
-    prefs.putString("peers", prefs.getString("peers", "") + msg.substring(4) ); feedlog("added peer '" + msg.substring(5) + "'"); 
-    
-    // Store the secret in a stable String to avoid pointer issues
-    String secretString = msg.substring(5);
-    const char* masterSecret = secretString.c_str();
-    size_t secretLength = secretString.length();
-    
-    // Debug: print the actual secret being used
-    feedlog("using secret: '" + secretString + "' (length: " + String(secretLength) + ")\n");
 
-    // Derive ChaCha20Poly1305 key (256-bit)
-    hkdf<SHA256>(
-        chachaKey, sizeof(chachaKey),           // output buffer, 32 bytes
-        (const uint8_t*)masterSecret, secretLength,  // input key material
-        nullptr, 0,                             // No salt
-        "encryption-key", strlen("encryption-key")  // info/context
-    );
-    // Print the derived chachaKey as hex bytes
+    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
+    uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 15, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
+
+    String nvsalias = ""; for (size_t i = 0; i < 15; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
+        nvsalias += (char)((aliasbuff[i] % 26) + 'a');
+    }
+
+    prefs.putString("peers", nvsalias + prefs.getString("peers", "")); feedlog("added secret '" + msg.substring(5) + "' under alias '" + nvsalias + "'");
+    prefs.putBytes(nvsalias.c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsalias'
+    
+
+
+    
+    /* -- debug helper to print hkdf result in hex TODO remove this
     String chachaKeyHex;
-    for (size_t i = 0; i < sizeof(chachaKey); i++) {
-      if (chachaKey[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
-      chachaKeyHex += String(chachaKey[i], HEX);
-      if (i < sizeof(chachaKey) - 1) chachaKeyHex += " ";
+    for (size_t i = 0; i < sizeof(hkdfbuff); i++) {
+      if (hkdfbuff[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
+      chachaKeyHex += String(hkdfbuff[i], HEX);
+      if (i < sizeof(hkdfbuff) - 1) chachaKeyHex += " ";
     }
     feedlog("chacha key derived (hex): " + chachaKeyHex + "\n");
     
-    // Derive raw bytes for MQTT topic (128-bit)
-    hkdf<SHA256>(
-        mqttKeyBytes, sizeof(mqttKeyBytes),     // output buffer, 16 bytes
-        (const uint8_t*)masterSecret, secretLength,  // input key material
-        nullptr, 0,                             // No salt
-        "mqtt-topic", strlen("mqtt-topic")      // info/context
-    );
-
-    const char* chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    String topic = "device/";
-    
-    // Map bytes to valid alphanumeric characters
-    for (size_t i = 0; i < sizeof(mqttKeyBytes) && i < 10; i++) {
-        topic += chars[mqttKeyBytes[i] % 62]; // 62 = length of chars array
+    uint8_t testbuff[32];
+    prefs.getBytes(nvsalias.c_str(), testbuff, sizeof(testbuff));   //  read back hkdf result from nvs to test if it worked
+    String testbuffHex;
+    for (size_t i = 0; i < sizeof(testbuff); i++) {
+      if (testbuff[i] < 0x10) testbuffHex += "0";  // Add leading zero for single digit hex
+      testbuffHex += String(testbuff[i], HEX);
+      if (i < sizeof(testbuff) - 1) testbuffHex += " ";
     }
+    feedlog("readback derived (hex): " + testbuffHex + "\n");
+    */
 
-    feedlog("mqtt topic derived: " + topic + "\n");
 
     return;
   }
