@@ -7,6 +7,8 @@
 
 TODO - in index.html make images open with constant width
 
+TODO - with custom partition merged.bin is broken you manually have to falsh main bin to app0 offset
+
 this is the current custom partition no spiffs!!
 
 ```
@@ -76,46 +78,12 @@ arduino-cli board search ESP32S3 Dev Module
 
 check board
 ```
-arduino-cli board details -b esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M
+arduino-cli board details -b esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M
 ```
-
-arduino-cli compile -v \
-  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
-  --build-property build.extra_flags="-DPARTITION_TABLE_CSV./partitions.csv" \
-  --build-path ./firmware
-
-
-arduino-cli board details -b \
-  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
-  --build-property build.extra_flags="-DPARTITION_TABLE_CSV./partitions.csv" \
-  --build-path ./firmware
-
-
-arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
-
-
-
-
-arduino-cli compile -v \
-  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
-  --build-property compiler.cpp.extra_flags="-DPARTITION_TABLE_CSV=\\\"/workspaces/fpaper/test/partitions.csv\\\"" \
-  --build-path ./firmware \
-  /workspaces/fpaper/test
-
-
-arduino-cli compile -v \
-  --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M \
-  --build-property compiler.cpp.extra_flags="-DPARTITION_TABLE_CSV=\\\"./partitions.csv\\\"" \
-  --build-path ./firmware
-
-
-
-
-
 
 compile with
 ```
-arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=min_spiffs,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
+arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
 ```
 
 'merged.bin' at adress 0x0 with https://espressif.github.io/esptool-js/ for web programming
