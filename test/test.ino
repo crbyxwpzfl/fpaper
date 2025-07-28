@@ -53,11 +53,55 @@
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
+static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free necessary images are of static size
+
+
+
+
+
+
+Preferences prefs;    //  first declaration of preferences as perfs
+TaskHandle_t showTasHandle;
+QueueHandle_t showQueue;    //  handle for servo queue
+//static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free necessary images are of static size
+void showTas(void *parameter) {    //  this handles servo movement
+  showQueue = xQueueCreate(5, 15);    // create queue with buffer of 5 with length of nvsalias so 15 chars
+ 
+  char buff[] = "nvsalias length";    //  buffer to read from queue
+  
+  pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
+  display.init(115200);    // init epd with 115200 baud rate
+  display.setRotation(0);    //  TODO make this a setting in preferences
+  
+  while(true){
+    if(!xQueueIsQueueEmptyFromISR( showQueue )){
+      xQueueReceive(showQueue, &buff, 0);    //  just do sth when queue not empty
+
+      if (strcmp(buff, "showVolatile")) {    //  either show volatile buffer directly or first read from nvs
+        prefs.getBytes(buff, volatileShowBuff, 15000);    //  read foto from nvs
+      }
+
+      display.setFullWindow();
+      display.firstPage();
+      do {
+        display.fillScreen(GxEPD_BLACK);
+        display.drawBitmap(0, 0, volatileShowBuff, display.width(), display.height(), GxEPD_WHITE);
+      } while (display.nextPage());
+
+      display.hibernate();   //  hibernate display to save power
+
+    }
+    vTaskDelay(1000);    //  no flicker just show every seconds
+  }
+}
+
+
+
 
 
 
 //NEW
-Preferences prefs;    //  first declaration of preferences as perfs
+//Preferences prefs;    //  commented so no redfinition error
 #define IMAGE_WIDTH 400
 #define IMAGE_HEIGHT 300
 #define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
@@ -111,31 +155,9 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
         Serial.printf("Write failed! Expected: %d, Written: %d\n", imageBufferOffset, bytesWritten);
     }
 
+    
+     xQueueSend(showQueue, "testimage", 0);    //  add test foto to show queue
 
-
-    size_t imageSize = prefs.getBytesLength("testimage");
-    if (imageSize > 0) {
-        //uint8_t* prefsImageBuffer = (uint8_t*)malloc(imageSize);
-        static uint8_t prefsImageBuffer[15000];  // No malloc/free needed
-        size_t bytesRead = prefs.getBytes("testimage", prefsImageBuffer, imageSize);
-
-        Serial.printf("Image read! Size: %d bytes\n", bytesRead);
-
-
-        // Display the image on the e-paper display
-        display.setFullWindow();
-        display.firstPage();
-        do {
-          display.fillScreen(GxEPD_BLACK);
-          display.drawBitmap(0, 0, prefsImageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
-        } while (display.nextPage());
-        // Use your image data here
-        
-        //free(prefsImageBuffer);
-    }
-
-    display.hibernate();
-    Serial.println("Image displayed on e-paper");
   }
 }
 //END
@@ -181,7 +203,7 @@ WebSerial WebSerial;  //  first delclartion of webserial not static anymore sinc
 void feedlog(String text, int r = 0, int g = 0, int b = 0, int t = 0, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
   if (r != 0 || g != 0 || b != 0 || t != 0) { struct ledfeedback{ int r; int g; int b; int t; }; } // no led feedback! for now ledfeedback ledc = {r, g, b, t}; xQueueSend(ledQueue, &ledc, 0); }    //  send led color to queue
   if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
-    Serial.print(text);
+    Serial.print(text);    // TODO add \r\n here so each line is printed correctly
     WebSerial.print(text.c_str()); 
   }    //  always print info and just debug when debug level
 }
@@ -607,7 +629,7 @@ void initflanks() {
 void setup() {
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff  
-  
+
   xTaskCreate( ledTas, "ledTas", 2048, NULL, 1, &ledTasHandle ); feedlog("init everything", 50, 50, 50, 2000, "debug");    //  spawn led task
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
   tryair();    // try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
@@ -616,12 +638,21 @@ void setup() {
   initmqtt(); feedlog("init done", 0, 75, 0, 300, "debug"); feedlog(".", 50, 50, 50, 200, "debug"); feedlog(".", 0, 75, 0, 500, "debug");   //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
 
 
+  xTaskCreate( showTas, "showTas", 2048, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
+
+  memcpy_P(volatileShowBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
+  xQueueSend(showQueue, "showVolatile", 0);    //  add volatile foto to show queue
+
+
+
+
+
 
   // Print PSRAM info
   Serial.printf("PSRAM: %s\n", psramFound() ? "Found" : "Not found");
   if (psramFound()) {
-    Serial.printf("Total PSRAM: %d bytes\n", ESP.getPsramSize());
-    Serial.printf("Free PSRAM: %d bytes\n", ESP.getFreePsram());
+    Serial.printf("Total PSRAM: %d bytes\r\n", ESP.getPsramSize());
+    Serial.printf("Free PSRAM: %d bytes\r\n", ESP.getFreePsram());
   }
  
 
@@ -638,38 +669,6 @@ void setup() {
     imageBuffer = nullptr;
   }
   //END
-
-
-
-  // init epd and draw test image
- 
-  pinMode(7, OUTPUT);
-  digitalWrite(7, HIGH); // enable power to the panel
-
-  display.init(115200);
-
-  display.setRotation(0);
-  
-
-  // Copy bitmap from PROGMEM to PSRAM for faster access
-  size_t bitmapSize = (display.width() * display.height()) / 8;
-  uint8_t* pBitmap = (uint8_t*)ps_malloc(bitmapSize);
-  
-  if (pBitmap) {
-    memcpy_P(pBitmap, epd_bitmap_xpwallp, bitmapSize);
-    
-    display.setFullWindow();
-    display.firstPage();
-    do {
-      display.fillScreen(GxEPD_BLACK);
-      display.drawBitmap(0, 0, pBitmap, display.width(), display.height(), GxEPD_WHITE);
-    } while (display.nextPage());
-    
-    free(pBitmap);
-  }
-
-  display.hibernate();
-
 
 
 }
