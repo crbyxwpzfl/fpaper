@@ -160,7 +160,11 @@ void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t 
 
   }
 }
-//END
+
+
+
+
+
 
 
 
@@ -554,7 +558,8 @@ void recv( String msg ){    //  this uses string likely char array is better see
   }
   if ( msg.indexOf("info") == 0 ) {
     char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); feedlog(nvsfree);
-    feedlog("auto frimware url is '" + prefs.getString("airlink", "error") + "' \n");
+    feedlog("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
+    feedlog("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
     int openacks; xQueuePeek(ackQueue, &openacks, 0); feedlog("open acks " + String(openacks) + " \n");
     if(WiFi.getMode() == WIFI_MODE_AP) { feedlog("local ip " + WiFi.softAPIP().toString() + " \n"); }
     if(WiFi.getMode() == WIFI_MODE_STA) { feedlog("local ip " + WiFi.localIP().toString() + " \n"); }
@@ -604,6 +609,11 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   );
   //END
 
+  server.on("/file", HTTP_POST, [](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+
+  });
+
+
 
 
   server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
@@ -631,29 +641,18 @@ void setup() {
 
   xTaskCreate( ledTas, "ledTas", 2048, NULL, 1, &ledTasHandle ); feedlog("init everything", 50, 50, 50, 2000, "debug");    //  spawn led task
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
-  tryair();    // try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
+
+  //tryair();    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
+  
   xTaskCreate( servoTas, "servoTas", 2048, NULL, 1, &servoTasHandle );    //  now spawn async tasks
   initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
-  initmqtt(); feedlog("init done", 0, 75, 0, 300, "debug"); feedlog(".", 50, 50, 50, 200, "debug"); feedlog(".", 0, 75, 0, 500, "debug");   //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
-
-
+  initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
   xTaskCreate( showTas, "showTas", 2048, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
+
+  feedlog("init done");
 
   memcpy_P(volatileShowBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
   xQueueSend(showQueue, "showVolatile", 0);    //  add volatile foto to show queue
-
-
-
-
-
-
-  // Print PSRAM info
-  Serial.printf("PSRAM: %s\n", psramFound() ? "Found" : "Not found");
-  if (psramFound()) {
-    Serial.printf("Total PSRAM: %d bytes\r\n", ESP.getPsramSize());
-    Serial.printf("Free PSRAM: %d bytes\r\n", ESP.getFreePsram());
-  }
- 
 
 
   if (receivedImageBuffer) {
@@ -668,7 +667,6 @@ void setup() {
     imageBuffer = nullptr;
   }
   //END
-
 
 }
 
