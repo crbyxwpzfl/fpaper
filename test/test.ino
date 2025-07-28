@@ -499,7 +499,6 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
     (-> posebilety to delet specific peer and all its related data)
 
-    (->  establish show task with queue to build corret seqence when pressing the button)
     */
 
 
