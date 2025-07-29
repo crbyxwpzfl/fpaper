@@ -86,20 +86,63 @@ void showTas(void *parameter) {    //  this handles servo movement
   showQueue = xQueueCreate(5, 15);    // create queue with buffer of 5 with length of nvsalias so 15 chars
  
   char buff[] = "nvsalias length";    //  buffer to read from queue
-  
+
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
   display.setRotation(0);    //  TODO make this a setting in preferences
-  
-  while(true){
-    if(!xQueueIsQueueEmptyFromISR( showQueue )){
-      xQueueReceive(showQueue, &buff, 0);    //  just do sth when queue not empty
 
-      if (strcmp(buff, "showVolatile")) {    //  either show volatile buffer directly or first read from nvs
+  String *peerArray = prefs.getString("peers", "local").split(' ');    //  splits peers into array attentione this is unsafe and for changed peers there hast to be a restart
+  uint8_t peerindex = 0, totalpeers = prefs.getString("peers", "local").split(' ').size();    //  this leaks memory clean this up man perhpas with peerString.substring(peerString.indexOf('local')+1, peerString.indexOf(' ', peerString.indexOf('local')+1) )
+  
+
+
+  String currpage = "homeScreen";    //  homescreen is default other value is sendScreen
+
+  while(true){
+    if(!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
+      xQueueReceive(showQueue, &buff, 0);
+
+
+
+      /*
+      
+      all this tries to manage state (home or sendScreen) and peerindex stuff inside of showTask
+
+      perhpas it is better to just have state and peerindex global
+
+
+      and then decide in flanktask wich peer to show next (i dont like this since the flanktask likes crashing)
+
+
+      perhaps have a combo of both solutions only keep state global and peerindex insde showTas
+      then button would know what to queue
+      also i can change state in upload handler to sendScreen 
+      
+      check if showVolatile alias directly draw imagebuffer only occures with sendScreen (after upload completion)
+      this means reciever logic always has to save incomming fotos (i think this is true)
+      
+      
+      */
+
+
+
+
+      prefs.getBytes(buff, volatileShowBuff, 15000);    //  for invalid nvs lookups this rturns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
+
+      if (strcmp(buff, "homeScreen") == 0) {    //  this is the home screen so show latest photo of first peer
+        peerindex = 0;
         prefs.getBytes(buff, volatileShowBuff, 15000);    //  read foto from nvs
       }
 
-      display.setFullWindow();
+      if (!strcmp(buff, "proceede")) {    //  show 'P'rofile picture of next peer 
+        ++peerindex%totalpeers; buff = peerArray[peerindex];    //  increment peerindex or wrap
+        
+        prefs.getBytes(buff.c_str() + "P", volatileShowBuff, 15000);    //  prep 'P'rofile picture of peer
+
+        if (currpage == "homeScreen") xQueueSend(showQueue, peerArray[peerindex].c_str()+'L' , 0)    //  prep 'L'atest foto of peer
+      }
+
+      display.setFullWindow();    
       display.firstPage();
       do {
         display.fillScreen(GxEPD_BLACK);
@@ -360,7 +403,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
                                 
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
          " user 'you'          sets your peer name \n"
-         " peer 'others'       adds peer to '" + prefs.getString("peers", " N.A.") + "' \n"
+         " peer 'others'       adds peer to '" + prefs.getString("peers", "local") + "' \n"
          " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.emqx.io") + "' \n"
          " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/fpaper") + "' \n"
 
@@ -393,11 +436,9 @@ void recv( String msg ){    //  this uses string likely char array is better see
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
   if( msg.indexOf("profile ") == 0){
-    prefs.putBytes("localP", volatileShowBuff, sizeof(volatileShowBuff));    //  store profile personal profile picture in nvs as 'localP'
+    prefs.putBytes("localP", volatileShowBuff, sizeof(volatileShowBuff));    //  store personal profile picture in nvs as 'localP'
     feedlog("saved your profile picture");
-  
-    // SOMEHOW RETURN TO BASE PHOTO before uploading the photo happend
-
+    xQueueSend(showQueue, "homeScreen", 0); return;    // return to home screen this cycles through latest fotos
   }
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
@@ -406,10 +447,13 @@ void recv( String msg ){    //  this uses string likely char array is better see
     String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
     }
-     
-    String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
+    
+    prefs.putString("peers", prefs.getString("peers", "local") + " " + nvsalias);    //  add new peer to peers list in preferences
+
+    // obsolete now i guess  String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
+    
     prefs.putBytes((nvsalias + "H").c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
-    feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'");
+    feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'"); return;
 
 
 
@@ -483,8 +527,6 @@ void recv( String msg ){    //  this uses string likely char array is better see
     feedlog("readback derived (hex): " + testbuffHex + "\n");
     */
 
-
-    return;
   }
   if ( msg.indexOf("ssid ") == 0 ) {
     prefs.putString("ssid", msg.substring(5)); feedlog("ssid set to '" + msg.substring(5) + "'\n"); return;
@@ -552,24 +594,11 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   WebSerial.begin(&server);    //  init webserial
 
 
-  /*
-  server.on(
-    "/file", HTTP_POST,
-    [](AsyncWebServerRequest* request) {},
-    handleImageUpload2
-  );
-  */
-
-
   server.on("/file", HTTP_POST, 
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
-    
 
-    // TODO SOMEHOW SAVE CURRENTLY DISPLAYED IMAGE SO I CAN RESURN TO IT IF ABORTED OR USER SET PB FOR EXAMPLE
-    //Serial.printf("Upload[%s]: start=%u, len=%u, final=%d\n", filename.c_str(), index, len, final);
-    
     if (!index){
       totalSize = request->header("Content-Length").toInt();
     }
