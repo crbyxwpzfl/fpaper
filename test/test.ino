@@ -59,6 +59,24 @@ static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free ne
 
 
 
+// --- TODO solwley get rid of these these just was for testing
+//Preferences prefs;    //  commented so no redfinition error
+#define IMAGE_WIDTH 400
+#define IMAGE_HEIGHT 300
+#define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
+
+uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
+size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
+
+uint8_t* receivedImageBuffer = nullptr; // Pointer to store received image data
+size_t receivedImageSize = 0;           // Size of received image data
+  
+
+
+
+
+
+
 
 Preferences prefs;    //  first declaration of preferences as perfs
 TaskHandle_t showTasHandle;
@@ -94,79 +112,6 @@ void showTas(void *parameter) {    //  this handles servo movement
     vTaskDelay(1000);    //  no flicker just show every seconds
   }
 }
-
-
-
-
-
-
-//NEW
-//Preferences prefs;    //  commented so no redfinition error
-#define IMAGE_WIDTH 400
-#define IMAGE_HEIGHT 300
-#define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
-
-uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
-size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
-
-uint8_t* receivedImageBuffer = nullptr; // Pointer to store received image data
-size_t receivedImageSize = 0;           // Size of received image data
-
-void handleImageUpload2(AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
-  if (index == 0) {
-    // Allocate memory for the image buffer on the first chunk
-    if (imageBuffer) {
-      free(imageBuffer); // Free any previously allocated buffer
-    }
-    imageBuffer = (uint8_t*)ps_malloc(IMAGE_SIZE);
-    imageBufferOffset = 0;
-
-    if (!imageBuffer) {
-      Serial.println("Failed to allocate memory for image buffer");
-      request->send(500, "text/plain", "Failed to allocate memory for image buffer");
-      return;
-    }
-
-    Serial.printf("Upload started: %s\n", filename.c_str());
-  }
-
-  // Copy the received data into the buffer
-  if (imageBuffer && imageBufferOffset + len <= IMAGE_SIZE) {
-    memcpy(imageBuffer + imageBufferOffset, data, len);
-    imageBufferOffset += len;
-  } else {
-    Serial.println("Image buffer overflow");
-    request->send(500, "text/plain", "Image buffer overflow");
-    return;
-  }
-
-  if (final) {
-    // Upload complete
-    Serial.printf("Upload complete: %s, %zu bytes received\n", filename.c_str(), imageBufferOffset);
-    //request->send(200, "text/plain", "Image upload complete");
-
-
-
-    size_t bytesWritten = prefs.putBytes("testimage", imageBuffer, imageBufferOffset);
-
-    if (bytesWritten == imageBufferOffset) {
-        Serial.printf("Image stored successfully! Size: %d bytes\n", imageBufferOffset);
-    } else {
-        Serial.printf("Write failed! Expected: %d, Written: %d\n", imageBufferOffset, bytesWritten);
-    }
-
-    
-     xQueueSend(showQueue, "testimage", 0);    //  add test foto to show queue
-
-  }
-}
-
-
-
-
-
-
-
 
 
 TaskHandle_t ledTasHandle;
@@ -601,19 +546,36 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   WebSerial.begin(&server);    //  init webserial
 
 
-  //NEW
+  /*
   server.on(
     "/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},
     handleImageUpload2
   );
-  //END
+  */
 
-  server.on("/file", HTTP_POST, [](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
 
+  server.on("/file", HTTP_POST, 
+    [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
+    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+    static size_t totalSize = 0;    //  static so this is not reset on each chunck
+    
+    //Serial.printf("Upload[%s]: start=%u, len=%u, final=%d\n", filename.c_str(), index, len, final);
+    
+    if (!index){
+      totalSize = request->header("Content-Length").toInt();
+    }
+    if (len + index > sizeof(volatileShowBuff)) {
+      feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
+    }
+    else if (len) {
+      feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
+      memcpy(volatileShowBuff + index, data, len);    //  copy data to volatile buffer
+    }
+    if (final){
+      xQueueSend(showQueue, "showVolatile", 0);
+    }
   });
-
-
 
 
   server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
