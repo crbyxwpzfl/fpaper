@@ -586,12 +586,17 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 }
 
 
-InterruptButton belowus(20, LOW);    //  why does this not work inside initflanks
+//InterruptButton belowus(20, LOW);    //  default longpress is 750ms
+InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    // TODO change this back to pin 20 why does this not work inside initflanks
 void initflanks() {
-  belowus.bind(Event_KeyDown, [](){ 
-    xQueueSend(servoQueue, "sit", 0); xQueueSend(sendmqttQueue, "look here", 0);  // feedlog("pressed so sending look here \n", 0, 75, 0, 0, "debug"); this in debug causes crash perhaps too much stack for isr
-    String peers = prefs.getString("peers", "none");
-    int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
+  belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
+    xQueueSend(servoQueue, "top", 0); 
+    //xQueueSend(sendmqttQueue, "look here", 0);
+    //String peers = prefs.getString("peers", "none");
+    //int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
+  });
+  belowus.bind(Event_DoubleClick, [](){
+    xQueueSend(showQueue, "showVolatile", 0);    //  show volatile buffer on longpress
   });
 }
 
