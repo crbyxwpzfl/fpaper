@@ -392,17 +392,23 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("user ") == 0 ) {
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
+  if( msg.indexOf("profile ") == 0){
+    prefs.putBytes("localP", volatileShowBuff, sizeof(volatileShowBuff));    //  store profile personal profile picture in nvs as 'localP'
+    feedlog("saved your profile picture");
+  
+    // SOMEHOW RETURN TO BASE PHOTO before uploading the photo happend
+
+  }
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
-
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
-    uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 15, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
+    uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
 
-    String nvsalias = ""; for (size_t i = 0; i < 15; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
+    String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
     }
      
     String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
-    prefs.putBytes(nvsalias.c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsalias'
+    prefs.putBytes((nvsalias + "H").c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
     feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'");
 
 
@@ -560,6 +566,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
     
+
+    // TODO SOMEHOW SAVE CURRENTLY DISPLAYED IMAGE SO I CAN RESURN TO IT IF ABORTED OR USER SET PB FOR EXAMPLE
     //Serial.printf("Upload[%s]: start=%u, len=%u, final=%d\n", filename.c_str(), index, len, final);
     
     if (!index){
