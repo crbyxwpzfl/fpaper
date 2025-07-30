@@ -245,62 +245,84 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
     xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-    esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise
-    prefs.getBytes((buff.substring(6) + "H").c_str(), hkdf, 32);
+    if (strcmp(buff + 6, "local") == 0) {
+      prefs.putBytes("localL", volatileShowBuff, sizeof(volatileShowBuff));    //  just save to local
 
-    chachapoly.setIV(curriv, 12);
-    chachapoly.setKey(hkdf, 32);
-    // this is optional right chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
-    
-    if (buff.indexOf("sendf ") == 0) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  encrypt current foto
-    if (buff.indexOf("annoy ") == 0) chachapoly.encrypt(cyphy, "look here", sizeof("look here"));    //  encrypt annoy message
+      Serial.println("saved image to localL and going back to homescreen");    //  TODO make this a feedlog
 
-    chachapoly.computeTag(tag, 16);
-    chachapoly.clear();
-    
+      continue;    //  jump back to while and dont process further
+    }
+
     uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
-    memcpy(payload, curriv, sizeof(curriv));    //  first iv
-    memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
-    memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  last data
+    uint32_t payloadlen = 12 + 16 + 15000;    //  assume full message iv + tag + cyphy
 
-    bool result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(payload), sizeof(curriv) + sizeof(tag) + sizeof(cyphy), true);
+    if (strncmp(buff, "annoy ", 6) == 0) {
+      esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
+      memcpy(payload, curriv, sizeof(curriv));    //  first iv
+      memcpy(payload + sizeof(curriv), reinterpret_cast<const uint8_t*>("look here"), 9);    //  just add 'look here' to payload
+      
+      payloadlen = 12 + 9;    //  length of cypher 9 bytes + length of iv 12 bytes
+      
+      Serial.println("packed look here to payload try sending now to " + String(buff + 6));
+    }
+
+    if (strncmp(buff, "sendf ", 6) == 0) {
+      esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise
+      prefs.getBytes((String(buff + 6) + "H").c_str(), hkdf, 32);
+      
+      chachapoly.setIV(curriv, 12);
+      chachapoly.setKey(hkdf, 32);
+      // this is optional right chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
+      chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  encrypt current foto
+
+      chachapoly.computeTag(tag, 16);
+      chachapoly.clear();
+
+      memcpy(payload, curriv, sizeof(curriv));    //  first iv
+      memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
+      memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  last data
+      
+      Serial.println("packed image to payload try sending now to " + String(buff + 6));
+    }
+
+    bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), payloadlen, true);
+
+    Serial.printf("Publish result %s\n", result ? "success" : "failed");    //  TODO make this a feedlog message
+  
     free(payload);
-
-
-    Serial.printf("Publish result (first %zu bytes): %s\n", testSize, result ? "success" : "failed");
-
-
-
-
-
-Serial.println("try to publ");
-bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
-Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
-
-Serial.println(buf);
-if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
-  // TODO only publish to our topic
-  if (imageBuffer && imageBufferOffset > 0) {
     
-    Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
-    Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
-  
- 
-    //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
-    int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
-    Serial.println(size);
-    size_t testSize = min(size, (int)imageBufferOffset);
-    bool result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
-    Serial.printf("Publish result (first %zu bytes): %s\n", testSize, result ? "success" : "failed");
+    xQueueSend(showQueue, "homeScreen", 0);
 
-    //mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, true);
-    Serial.println("did it");
-  } else {
-    Serial.println("eeeeeeee");
-  }
-}
-  
+
+    /*  this was test stuff 
+    Serial.println("try to publ");
+    bool result1 = mqttClient.publish("/fpaper/test", 0, 0, "Hello World!");
+    Serial.printf("Publish result hello world: ", result1 ? "success" : "failed");
+
+    Serial.println(buf);
+    if (strcmp(buf, "test") == 0) {  // TODO for testing this should only send when publ test
+      // TODO only publish to our topic
+      if (imageBuffer && imageBufferOffset > 0) {
+        
+        Serial.printf("imageBufferOffset: %zu\n", imageBufferOffset);
+        Serial.printf("First few bytes: %02X %02X %02X %02X\n", imageBuffer[0], imageBuffer[1], imageBuffer[2], imageBuffer[3]);
+      
+    
+        //bool result = mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, false); // this crashes or the function returns false so sending did fail
+        int size = prefs.getInt("top", 10);    //  get size from preferences or default to 10
+        Serial.println(size);
+        size_t testSize = min(size, (int)imageBufferOffset);
+        bool result = mqttClient.publish("/fpaper/test", 0, 0, reinterpret_cast<const char*>(imageBuffer), testSize, true);
+        Serial.printf("Publish result (first %zu bytes): %s\n", testSize, result ? "success" : "failed");
+
+        //mqttClient.publish("/fpaper/test", 0, false, (const char*)imageBuffer, imageBufferOffset, true);
+        Serial.println("did it");
+      } else {
+        Serial.println("eeeeeeee");
+      }
+    }
+  */
 
 
 
@@ -325,7 +347,7 @@ void initmqtt(){    //  handle incoming mqtt
       
       // decode message here topic minus /fpaper/ is the nvsalias so to get correct key use getBytes() with topic.substring(8)+'H' this gives hkdf of corosponding peer
     
-  }
+  });
 
 
 
