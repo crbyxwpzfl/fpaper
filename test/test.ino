@@ -332,6 +332,28 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 }
 
 
+
+
+/*
+
+  above us in send mqttTas there is all the ping response stuff missing!! 
+    so when we get a ping we responde with profile picture indicating that we are ready to recieve (perhaps has picture first and compare against incoming hash)
+    when we enter sendscreen we start pinging peers to see who is avalible (perhaps by sending hash of profile picture)
+    
+  blow us we have to find a solution for how to queue incoming profile pictures and how to determine/set nex peer list for sendscreen
+
+
+
+
+*/
+
+
+
+
+
+
+
+
 //Preferences prefs;    //  commented so no redfinition error
 //PsychicMqttClient mqttClient;    //  commented so no redfinition error
 void initmqtt(){    //  handle incoming mqtt
@@ -492,7 +514,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
          " user 'you'          sets your peer name \n"
          " peer 'others'       adds peer to '" + prefs.getString("peers", "local") + "' \n"
-         " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.emqx.io") + "' \n"
+         " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "' \n"
          " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "/fpaper") + "' \n"
 
          "\nservo config. please take finger off before \n"
