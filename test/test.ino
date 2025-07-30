@@ -90,7 +90,7 @@ void showTas(void *parameter) {    //  this handles servo movement
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
-  display.setRotation(1);    //  TODO make this a setting in preferences
+  display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
 
 
@@ -132,8 +132,13 @@ void showTas(void *parameter) {    //  this handles servo movement
       }
 
       if (!strcmp(buff, "proceede")) {    //  show 'P'rofile picture of next peer and perhaps 'L'atest foto of peer
-        if (peerString.indexOf(' ', peerString.indexOf(currpeer)+1) == -1) currpeer = "local";   //  test for last peer
-        if (peerString.indexOf(' ', peerString.indexOf(currpeer)+1) != -1) currpeer = peerString.substring(peerString.indexOf(currpeer)+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+1) );
+        //if (peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) == -1)
+        //if (peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) != -1)
+        if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) currpeer = "local";   //  account for trailing space here test for last peer
+        else currpeer = peerString.substring(peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );
+
+
+        Serial.println("got proceede sendscreen is " + String(sendScreen) + " try to find " + currpeer + "P in nvs");
 
         if (!prefs.getBytes((currpeer + "P").c_str(), volatileShowBuff, 15000)) Serial.println("nothing found for " + currpeer + "P");    //  TODO print to feedlog here !!   prep 'P'rofile picture of peer
         if (!sendScreen) xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  prep 'L'atest foto of peer
@@ -450,7 +455,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
     }
     
-    prefs.putString("peers", prefs.getString("peers", "local") + " " + nvsalias);    //  add new peer to peers list in preferences
+    prefs.putString("peers", prefs.getString("peers", "local") + " " + nvsalias + " ");    //  here the trailing space is to find last peer correctly in showTas add new peer to peers list in preferences
 
     // obsolete now i guess  String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
     
@@ -612,7 +617,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       memcpy(volatileShowBuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){
-      xQueueSend(showQueue, "showVolatile", 0);
+      xQueueSend(showQueue, "sendScreen", 0);
     }
   });
 
@@ -626,16 +631,17 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
-InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    // TODO change this back to pin 20 why does this not work inside initflanks
+InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
 void initflanks() {
   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
-    xQueueSend(servoQueue, "top", 0); 
+    xQueueSend(showQueue, "proceede", 0);    //  show volatile buffer on longpress
+    //xQueueSend(servoQueue, "top", 0); 
     //xQueueSend(sendmqttQueue, "look here", 0);
     //String peers = prefs.getString("peers", "none");
     //int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
   });
   belowus.bind(Event_DoubleClick, [](){
-    xQueueSend(showQueue, "showVolatile", 0);    //  show volatile buffer on longpress
+    xQueueSend(showQueue, "send", 0);    //  show volatile buffer on longpress
   });
 }
 
@@ -658,7 +664,7 @@ void setup() {
   feedlog("init done");
 
   memcpy_P(volatileShowBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
-  xQueueSend(showQueue, "showVolatile", 0);    //  add volatile foto to show queue
+  xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 
 
   if (receivedImageBuffer) {
