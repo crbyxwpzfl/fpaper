@@ -80,6 +80,7 @@ size_t receivedImageSize = 0;           // Size of received image data
 
 Preferences prefs;    //  first declaration of preferences as perfs
 TaskHandle_t showTasHandle;
+QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
 //static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free necessary images are of static size
 void showTas(void *parameter) {    //  this handles servo movement
@@ -89,57 +90,58 @@ void showTas(void *parameter) {    //  this handles servo movement
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
-  display.setRotation(0);    //  TODO make this a setting in preferences
+  display.setRotation(1);    //  TODO make this a setting in preferences
 
-  String *peerArray = prefs.getString("peers", "local").split(' ');    //  splits peers into array attentione this is unsafe and for changed peers there hast to be a restart
-  uint8_t peerindex = 0, totalpeers = prefs.getString("peers", "local").split(' ').size();    //  this leaks memory clean this up man perhpas with peerString.substring(peerString.indexOf('local')+1, peerString.indexOf(' ', peerString.indexOf('local')+1) )
+
+
+  //String *peerArray = prefs.getString("peers", "local").split(' ');    //  splits peers into array attentione this is unsafe and for changed peers there hast to be a restart
+  //uint8_t peerindex = 0, totalpeers = prefs.getString("peers", "local").split(' ').size();    //  this leaks memory clean this up man perhpas with peerString.substring(peerString.indexOf('local')+1, peerString.indexOf(' ', peerString.indexOf('local')+1) )
   
+  //String* tempArray = peerString.split(' ');
+  //uint8_t totalpeers = peerString.split(' ').size(); // This creates another array!
+  
+  // Copy to fixed array
+  //String peerArray[10];
+  //for (int i = 0; i < min(totalpeers, 10); i++) {
+  //  peerArray[i] = tempArray[i];
+  //}
+  
+  //delete[] tempArray; // Clean up
 
 
-  String currpage = "homeScreen";    //  homescreen is default other value is sendScreen
+  String peerString = prefs.getString("peers", "local");
+  uint8_t sendScreen = 0;    //  homescreen is default otherwise sendScreen
+  String currpeer = "local";    //  start locally
 
   while(true){
     if(!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       xQueueReceive(showQueue, &buff, 0);
 
-
-
-      /*
-      
-      all this tries to manage state (home or sendScreen) and peerindex stuff inside of showTask
-
-      perhpas it is better to just have state and peerindex global
-
-
-      and then decide in flanktask wich peer to show next (i dont like this since the flanktask likes crashing)
-
-
-      perhaps have a combo of both solutions only keep state global and peerindex insde showTas
-      then button would know what to queue
-      also i can change state in upload handler to sendScreen 
-      
-      check if showVolatile alias directly draw imagebuffer only occures with sendScreen (after upload completion)
-      this means reciever logic always has to save incomming fotos (i think this is true)
-      
-      
-      */
-
-
-
-
-      prefs.getBytes(buff, volatileShowBuff, 15000);    //  for invalid nvs lookups this rturns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
-
-      if (strcmp(buff, "homeScreen") == 0) {    //  this is the home screen so show latest photo of first peer
-        peerindex = 0;
-        prefs.getBytes(buff, volatileShowBuff, 15000);    //  read foto from nvs
+      if (!sendScreen){     //  while in send screen dont let others show stuff directly
+        prefs.getBytes(buff, volatileShowBuff, 15000);    //  for invalid nvs lookups this rturns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
       }
 
-      if (!strcmp(buff, "proceede")) {    //  show 'P'rofile picture of next peer 
-        ++peerindex%totalpeers; buff = peerArray[peerindex];    //  increment peerindex or wrap
-        
-        prefs.getBytes(buff.c_str() + "P", volatileShowBuff, 15000);    //  prep 'P'rofile picture of peer
+      if (!strcmp(buff, "sendScreen")) {    //  here the volatileShowBuff already was preped inside upload so nothing to do here
+        sendScreen = 1;
+      }
 
-        if (currpage == "homeScreen") xQueueSend(showQueue, peerArray[peerindex].c_str()+'L' , 0)    //  prep 'L'atest foto of peer
+      if (!strcmp(buff, "homeScreen")) {    //  this is the home screen so show latest photo of first peer
+        currpeer = "local";    //  reset current peer to local 
+        sendScreen = 0;
+        if (!prefs.getBytes((currpeer + "L").c_str(), volatileShowBuff, 15000)) Serial.println("nothing found for " + currpeer + "L");    //  read foto from nvs
+      }
+
+      if (!strcmp(buff, "proceede")) {    //  show 'P'rofile picture of next peer and perhaps 'L'atest foto of peer
+        if (peerString.indexOf(' ', peerString.indexOf(currpeer)+1) == -1) currpeer = "local";   //  test for last peer
+        if (peerString.indexOf(' ', peerString.indexOf(currpeer)+1) != -1) currpeer = peerString.substring(peerString.indexOf(currpeer)+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+1) );
+
+        if (!prefs.getBytes((currpeer + "P").c_str(), volatileShowBuff, 15000)) Serial.println("nothing found for " + currpeer + "P");    //  TODO print to feedlog here !!   prep 'P'rofile picture of peer
+        if (!sendScreen) xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  prep 'L'atest foto of peer
+      }
+
+      if(!strcmp(buff, "send")) {    //  kickoff send of volatileShowBuff or ping current peer
+        if ( sendScreen) xQueueSend(sendmqttQueue, (currpeer + "send").c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  send foto to peer
+        if (!sendScreen) xQueueSend(sendmqttQueue, (currpeer + "ping").c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  just ping peer
       }
 
       display.setFullWindow();    
@@ -224,7 +226,7 @@ void servoTas(void *parameter) {    //  this handles servo movement
 //Preferences prefs;    //  commented so no redfinition error
 PsychicMqttClient mqttClient;    //  first declaration of mqttClient
 TaskHandle_t sendmqttHandle;
-QueueHandle_t sendmqttQueue;
+//QueueHandle_t sendmqttQueue;    //  comented so no redfinition error
 void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   sendmqttQueue = xQueueCreate( 5, sizeof("  long ass peer name  says look here  ") );    // create queue with buffer of 5
   char buf[] = "  long ass peer name  says look here  ";    //  this hard coded finite length stresses me in python me no have to worry me miss python
