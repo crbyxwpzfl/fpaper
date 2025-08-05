@@ -9,13 +9,13 @@ TODO - in index.html make images open with constant width
 
 this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
 ```
-| Name     | Type  | SubType | Offset  | Size    | Size (MB)  |
-|----------|-------|---------|---------|---------|------------|
-| otadata  | data  | ota     | 0x9000  | 0x2000  | 0.008 MiB  |
-| app0     | app   | ota_0   | 0x10000 | 0x200000| 2.000 MiB  |
-| app1     | app   | ota_1   | 0x210000| 0x200000| 2.000 MiB  |
-| coredump | data  | coredump| 0x410000| 0x10000 | 0.063 MiB  |
-| nvs      | data  | nvs     | 0x420000| 0x200000| 2.000 MiB  |
+| Name     | Type  | SubType  | Offset   | Size     | Size (MB)   |
+|----------|-------|----------|----------|----------|-------------|
+| otadata  | data  | ota      | 0x9000   | 0x2000   | 0.00781 MB  |
+| app0     | app   | ota_0    | 0x10000  | 0x200000 | 2.00000 MB  |
+| app1     | app   | ota_1    | 0x210000 | 0x200000 | 2.00000 MB  |
+| coredump | data  | coredump | 0x410000 | 0x10000  | 0.06250 MB  |
+| nvs      | data  | nvs      | 0x420000 | 0x200000 | 2.00000 MB  |
 
 -- total ~6.07/8 MB (~1.93 MB free)
 ```
