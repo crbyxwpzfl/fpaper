@@ -360,7 +360,8 @@ void initmqtt(){    //  handle incoming mqtt
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
   
   String peerString = prefs.getString("peers", "local");    //  get peers from preferences
-
+  
+  /* THIS is the new stuff but right now i get only crashes perhaps from here
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen level deep for now TODO change this to only subscribe to peers
     if (peerString.indexOf(String(topic).substring(8)) == -1) return;    //  this is dangars this matches partial string too topic still contains /fpaper/ so strip it see weather we want to listen to peer message 
     if (memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
@@ -370,9 +371,10 @@ void initmqtt(){    //  handle incoming mqtt
       // decode message here topic minus /fpaper/ is the nvsalias so to get correct key use getBytes() with topic.substring(8)+'H' this gives hkdf of corosponding peer
     
   });
+  
+  */
 
-
-
+  
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
        Serial.printf("Received message on topic: %s\n", topic);
 

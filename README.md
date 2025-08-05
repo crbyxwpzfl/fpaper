@@ -7,18 +7,15 @@
 
 TODO - in index.html make images open with constant width
 
-TODO - with custom partition merged.bin is broken you manually have to falsh main bin to app0 offset
-
-this is the current custom partition no spiffs!!
-
+this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
 ```
-| Type | Sub |  Offset  |   Size   |       Label      | Size (MB) |
-| ---- | --- | -------- | -------- | ---------------- | --------- |
-|  01  | 02  | 0x009000 | 0x200000 | nvs              | 2.0 MB    |
-|  01  | 00  | 0x209000 | 0x002000 | otadata          | 0.008 MB  |
-|  00  | 10  | 0x210000 | 0x200000 | app0             | 2.0 MB    |
-|  00  | 11  | 0x410000 | 0x200000 | app1             | 2.0 MB    |
-|  01  | 03  | 0x610000 | 0x010000 | coredump         | 0.0625 MB |
+| Name     | Type  | SubType | Offset  | Size    | Size (MB)  |
+|----------|-------|---------|---------|---------|------------|
+| otadata  | data  | ota     | 0x9000  | 0x2000  | 0.008 MiB  |
+| app0     | app   | ota_0   | 0x10000 | 0x200000| 2.000 MiB  |
+| app1     | app   | ota_1   | 0x210000| 0x200000| 2.000 MiB  |
+| coredump | data  | coredump| 0x410000| 0x10000 | 0.063 MiB  |
+| nvs      | data  | nvs     | 0x420000| 0x200000| 2.000 MiB  |
 
 -- total ~6.07/8 MB (~1.93 MB free)
 ```
@@ -86,4 +83,36 @@ compile with
 arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
 ```
 
+/home/codespace/.arduino15/packages/esp32/hardware/esp32/3.2.0/tools/partitions
+
+
+arduino-cli compile -v --fqbn esp32:esp32:esp32s3:PartitionScheme=custom,CustomPartitions=partitions,PSRAM=opi,FlashMode=qio,FlashSize=8M --build-path ./firmware
+
+
+cp /workspaces/fpaper/test/partitions.csv /home/codespace/.arduino15/packages/esp32/hardware/esp32/3.2.0/tools/partitions/custom.csv
+
+
 'merged.bin' at adress 0x0 with https://espressif.github.io/esptool-js/ for web programming
+
+
+
+
+
+/home/codespace/.arduino15/packages/esp32/tools/esptool_py/4.9.dev3/esptool --chip esp32s3 partition_table --partition-table-file partitions.csv
+
+
+
+
+esptool.py --chip esp32s3 merge_bin -o merged.bin --flash_mode qio --flash_freq 80m --flash_size 8MB \
+  0x0 firmware/test.ino.bootloader.bin \
+  0x8000 firmware/test.ino.partitions.bin \
+  0x9000 nvs_data.bin \
+  0x210000 firmware/test.ino.bin
+
+
+
+
+/home/codespace/.arduino15/packages/esp32/tools/esptool_py/4.9.dev3/esptool --chip esp32s3 merge_bin -o merged-manual.bin --flash_mode qio --flash_freq 80m --flash_size 8MB \
+  0x0 firmware/test.ino.bootloader.bin \
+  0x8000 firmware/test.ino.partitions.bin \
+  0x210000 firmware/test.ino.bin
