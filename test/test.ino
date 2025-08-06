@@ -144,7 +144,7 @@ void showTas(void *parameter) {    //  this handles servo movement
         if (!sendScreen) xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  prep 'L'atest foto of peer
       }
 
-      if(!strcmp(buff, "send")) {    //  kickoff send of volatileShowBuff or ping current peer
+      if(!strcmp(buff, "send")) {    //  send off volatileShowBuff or annoy current peer
         if ( sendScreen) xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  send foto to peer
         if (!sendScreen) xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  just annoy peer with profile
       }
@@ -276,10 +276,11 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
         memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  then foto
 
-        if (!strncmp(buff, "sendq ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "you there", 9);    //  query for listening peers  TODO send hash of peers profile to minimize messages
-        if (!strncmp(buff, "senda ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "..show me", 9);    //  aswer as listening
-        if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  this indicates that we send a foto
-    
+        if (!strncmp(buff, "query ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "you there", 9);    //  query for listening peers  TODO send hash of peers profile to minimize messages
+        if (!strncmp(buff, "rsvp ", 5))  memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "sure sure", 9);    //  aswer as listening
+        if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  this indicates that we send a foto
+        if (!strncmp(buff, "annoy ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  this indicates that we send a profile
+
         Serial.println("packed payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
 
         mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
@@ -315,7 +316,44 @@ void initmqtt(){    //  handle incoming mqtt
     if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
     if ( !memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
     
+
+    if ( memcmp("you there", payload + 12 + 16 + 15000, 9) ) {    //  here always responde with our profile    and perhaps save recieved profile to nvsalias+'P'    and when in homeScreen show recieved profile
+      xQueueSend(sendmqttQueue, "senda " + String(topic).substring(7) , 0);    //  responde to peer with our profile and apendix '..show me'
+
+      return; 
+    }
+
+
     
+    if ( memcmp("sure sure", payload + 12 + 16 + 15000, 9) ) {    //  here queue recieved profile to sendScreen    and perhaps save recieved profile to nvsalias+'P'
+    
+      return; 
+    }
+
+
+
+    if ( memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here always save the recieved foto to nvsalias+'L'    and when in homeScreen show foto
+    
+      return;
+    }
+
+
+
+    if ( memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here when in homeScreen show recieved profile    and perhaps save recieved profile to nvsalias+'P'
+    
+      return;
+    }
+
+
+
+
+
+    uint8_t hkdf[32] = ;
+
+    uint8_t 
+    uint8_t cyphy[15000] = ;
+    uint8_t tag[16] = ;
+
     Serial.println("Received message on topic: " + String(topic) );
     
     chachapoly.setIV( , 12);
