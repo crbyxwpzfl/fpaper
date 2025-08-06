@@ -253,8 +253,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       xQueueSend(showQueue, "homeScreen", 0);    //  go to homescreen
     } 
 
-    if (strncmp(buff, "sendp ", 6) == 0 || strncmp(buff, "sendv ", 6) == 0) {    //  here actually do send stuff either answer with profile or annoy    // TODO somehow dont send full profile everytime you want to annoy
-      uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
+    else {    //  here actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
     
       esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
@@ -262,40 +262,32 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       chachapoly.setIV(curriv, 12);
       chachapoly.setKey(hkdf, 32);
-      // chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly but this is optional right
 
-      if (strncmp(buff, "sendp ", 6) == 0) chachapoly.encrypt(cyphy, prefs.getBytes("localP"), cyphy, 15000), 15000);    //  encrypt our own profile either to annoy or to answer to ping
-      if (strncmp(buff, "sendv ", 6) == 0) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  encrypt current foto
+      //if (strncmp(buff, "sendq ", 6) == 0) chachapoly.addAuthData("look here", 9);    //  TODO this is optional right to find listenig peers querey peers with 'sendq' this is authenticated but not encrypted
+      //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
-      chachapoly.computeTag(tag, 16);
+      if ( strncmp(buff, "sendv ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile for non 'sendv' eg 'senda' or 'sendq'
+      if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  with 'sendv' send current foto
+
+      chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
       chachapoly.clear();
 
       memcpy(payload, curriv, sizeof(curriv));    //  first iv
       memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
-      memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  last data
+      memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  then foto
 
-      Serial.println("packed our profile to payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
+      if (!strncmp(buff, "sendq ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "you there", 9);    //  query for listening peers  TODO send hash of peers profile to minimize messages
+      if (!strncmp(buff, "senda ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "..show me", 9);    //  aswer as listening
+      if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  this indicates that we send a foto
+   
+      Serial.println("packed payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
 
-      bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000, true);    //  publish to base topic + peer alias
+      mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
 
-      Serial.printf("Publish result %s\n", result ? "success" : "failed");    //  TODO make this a feedlog message
-    
       free(payload);
 
-      if (strncmp(buff, "sendv ", 6) == 0) xQueueSend(showQueue, "homeScreen", 0);    //  only return home for sendv
+      if (!strncmp(buff, "sendv ", 6)) xQueueSend(showQueue, "homeScreen", 0);    //  only return home for sendv
     }
-
-    if (strncmp(buff, "sendq ", 6) == 0) {
-      uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
-      esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
-
-      bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>("look here"), 12 + 9, true);    //  publish to base topic + peer alias
-      
-      
-    
-    }
-
-
 
 
     /*  this was test stuff 
