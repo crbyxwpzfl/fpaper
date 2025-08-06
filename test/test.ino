@@ -145,8 +145,8 @@ void showTas(void *parameter) {    //  this handles servo movement
       }
 
       if(!strcmp(buff, "send")) {    //  kickoff send of volatileShowBuff or ping current peer
-        if ( sendScreen) xQueueSend(sendmqttQueue, ("sendf " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  send foto to peer
-        if (!sendScreen) xQueueSend(sendmqttQueue, ("annoy " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  just ping peer
+        if ( sendScreen) xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  send foto to peer
+        if (!sendScreen) xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  just annoy peer with profile
       }
 
       display.setFullWindow();    
@@ -245,36 +245,27 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
     xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-    if (strcmp(buff + 6, "local") == 0) {
-      prefs.putBytes("localL", volatileShowBuff, sizeof(volatileShowBuff));    //  just save to local
+    if (strcmp(buff + 6, "local") == 0) {    //  for this do not send anything just save to local
+      prefs.putBytes("localL", volatileShowBuff, sizeof(volatileShowBuff));
 
       Serial.println("saved image to localL and going back to homescreen");    //  TODO make this a feedlog
 
-      continue;    //  jump back to while and dont process further
-    }
+      xQueueSend(showQueue, "homeScreen", 0);    //  go to homescreen
+    } 
 
-    uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
-    uint32_t payloadlen = 12 + 16 + 15000;    //  assume full message iv + tag + cyphy
-
-    if (strncmp(buff, "annoy ", 6) == 0) {
+    if (strncmp(buff, "sendp ", 6) == 0 || strncmp(buff, "sendv ", 6) == 0) {    //  here actually do send stuff either answer with profile or annoy    // TODO somehow dont send full profile everytime you want to annoy
+      uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
+    
       esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
-      memcpy(payload, curriv, sizeof(curriv));    //  first iv
-      memcpy(payload + sizeof(curriv), reinterpret_cast<const uint8_t*>("look here"), 9);    //  just add 'look here' to payload
-      
-      payloadlen = 12 + 9;    //  length of cypher 9 bytes + length of iv 12 bytes
-      
-      Serial.println("packed look here to payload try sending now to " + String(buff + 6));
-    }
+      prefs.getBytes((String(buff + 6) + "H").c_str(), hkdf, 32);    //  find the peer hkdf
 
-    if (strncmp(buff, "sendf ", 6) == 0) {
-      esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise
-      prefs.getBytes((String(buff + 6) + "H").c_str(), hkdf, 32);
-      
       chachapoly.setIV(curriv, 12);
       chachapoly.setKey(hkdf, 32);
-      // this is optional right chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly
-      chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  encrypt current foto
+      // chachapoly.addAuthData(authdata, 12);    //  add auth data to chachapoly but this is optional right
+
+      if (strncmp(buff, "sendp ", 6) == 0) chachapoly.encrypt(cyphy, prefs.getBytes("localP"), cyphy, 15000), 15000);    //  encrypt our own profile either to annoy or to answer to ping
+      if (strncmp(buff, "sendv ", 6) == 0) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  encrypt current foto
 
       chachapoly.computeTag(tag, 16);
       chachapoly.clear();
@@ -282,17 +273,29 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       memcpy(payload, curriv, sizeof(curriv));    //  first iv
       memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
       memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  last data
-      
-      Serial.println("packed image to payload try sending now to " + String(buff + 6));
+
+      Serial.println("packed our profile to payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
+
+      bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000, true);    //  publish to base topic + peer alias
+
+      Serial.printf("Publish result %s\n", result ? "success" : "failed");    //  TODO make this a feedlog message
+    
+      free(payload);
+
+      if (strncmp(buff, "sendv ", 6) == 0) xQueueSend(showQueue, "homeScreen", 0);    //  only return home for sendv
     }
 
-    bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), payloadlen, true);
+    if (strncmp(buff, "sendq ", 6) == 0) {
+      uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy));    //  allocate memory for payload and build payload
+      esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
-    Serial.printf("Publish result %s\n", result ? "success" : "failed");    //  TODO make this a feedlog message
-  
-    free(payload);
+      bool result = mqttClient.publish( (prefs.getString("mqtop", "/fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>("look here"), 12 + 9, true);    //  publish to base topic + peer alias
+      
+      
     
-    xQueueSend(showQueue, "homeScreen", 0);
+    }
+
+
 
 
     /*  this was test stuff 
@@ -350,10 +353,6 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
 
 
-
-
-
-
 //Preferences prefs;    //  commented so no redfinition error
 //PsychicMqttClient mqttClient;    //  commented so no redfinition error
 void initmqtt(){    //  handle incoming mqtt
@@ -361,7 +360,6 @@ void initmqtt(){    //  handle incoming mqtt
   
   String peerString = prefs.getString("peers", "local");    //  get peers from preferences
   
-  /* THIS is the new stuff but right now i get only crashes perhaps from here
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen level deep for now TODO change this to only subscribe to peers
     if (peerString.indexOf(String(topic).substring(8)) == -1) return;    //  this is dangars this matches partial string too topic still contains /fpaper/ so strip it see weather we want to listen to peer message 
     if (memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
@@ -372,9 +370,9 @@ void initmqtt(){    //  handle incoming mqtt
     
   });
   
-  */
 
-  
+
+  /*
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
        Serial.printf("Received message on topic: %s\n", topic);
 
@@ -440,12 +438,6 @@ void initmqtt(){    //  handle incoming mqtt
       }
       feedlog("mqtt recived " + String(payload), 0, 0, 0, 0, "debug");
   
-  
-  
-  
-  
-  
-  
     });
 
     // only listen to everything but our self 
@@ -459,6 +451,11 @@ void initmqtt(){    //  handle incoming mqtt
   mqttClient.unsubscribe(myTopic.c_str());
   
   //mqttClient.unsubscribe("/fpaper/" + String(ESP.getEfuseMac()));
+  
+  */
+
+
+
 
   xTaskCreate( sendmqttTas, "sendmqttTas", 2048, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task
   mqttClient.connect();
