@@ -8,6 +8,8 @@
 
 # fpaper
 
+todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
+
 todo - boot into local profile/latest
 
 todo - fix/set currpeer when recieved/show profile/latest
@@ -16,7 +18,7 @@ todo - in index.html make images open with constant width
 
 todo - fix website for chrome
 
-planed - fix feedlog and serial print so serial needs \r\n i guess
+planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib 
 
 vision - stop using derived/unique adresses fully annymise conversation
 
@@ -32,6 +34,7 @@ vision - use encryption of nvs
 
 vision - add peers dynamicly/without restart
 
+vision - auto restart on connection loss
 
 
 this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
