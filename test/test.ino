@@ -94,68 +94,19 @@ void showTas(void *parameter) {    //  this handles servo movement
   display.init(115200);    // init epd with 115200 baud rate
   display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
-
-
-  //String *peerArray = prefs.getString("peers", "local").split(' ');    //  splits peers into array attentione this is unsafe and for changed peers there hast to be a restart
-  //uint8_t peerindex = 0, totalpeers = prefs.getString("peers", "local").split(' ').size();    //  this leaks memory clean this up man perhpas with peerString.substring(peerString.indexOf('local')+1, peerString.indexOf(' ', peerString.indexOf('local')+1) )
-  
-  //String* tempArray = peerString.split(' ');
-  //uint8_t totalpeers = peerString.split(' ').size(); // This creates another array!
-  
-  // Copy to fixed array
-  //String peerArray[10];
-  //for (int i = 0; i < min(totalpeers, 10); i++) {
-  //  peerArray[i] = tempArray[i];
-  //}
-  
-  //delete[] tempArray; // Clean up
-
-
-  String peerString = prefs.getString("peers", "local");
-  uint8_t sendScreen = 0;    //  homescreen is default otherwise sendScreen
-  String currpeer = "local";    //  start locally
+  uint8_t showBuff[15000];
 
   while(true){
     if(!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       xQueueReceive(showQueue, &buff, 0);
 
-      if (!sendScreen){     //  while in send screen dont let others show stuff directly
-        prefs.getBytes(buff, volatileShowBuff, 15000);    //  for invalid nvs lookups this rturns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
-      }
-
-      if (!strcmp(buff, "sendScreen")) {    //  here the volatileShowBuff already was preped inside upload so nothing to do here
-        sendScreen = 1;
-      }
-
-      if (!strcmp(buff, "homeScreen")) {    //  this is the home screen so show latest photo of first peer
-        currpeer = "local";    //  reset current peer to local 
-        sendScreen = 0;
-        if (!prefs.getBytes((currpeer + "L").c_str(), volatileShowBuff, 15000)) Serial.println("nothing found for " + currpeer + "L");    //  read foto from nvs
-      }
-
-      if (!strcmp(buff, "proceede")) {    //  show 'P'rofile picture of next peer and perhaps 'L'atest foto of peer
-        //if (peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) == -1)
-        //if (peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) != -1)
-        if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) currpeer = "local";   //  account for trailing space here test for last peer
-        else currpeer = peerString.substring(peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );
-
-
-        Serial.println("got proceede sendscreen is " + String(sendScreen) + " try to find " + currpeer + "P in nvs");
-
-        if (!prefs.getBytes((currpeer + "P").c_str(), volatileShowBuff, 15000)) Serial.println("nothing found for " + currpeer + "P");    //  TODO print to feedlog here !!   prep 'P'rofile picture of peer
-        if (!sendScreen) xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  prep 'L'atest foto of peer
-      }
-
-      if(!strcmp(buff, "send")) {    //  send off volatileShowBuff or annoy current peer
-        if ( sendScreen) xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  send foto to peer
-        if (!sendScreen) xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0); xQueueSend(showQueue, "homeScreen", 0);    //  just annoy peer with profile
-      }
+      if (!prefs.getBytes( buff, showBuff, 15000 )) Serial.println("nothing found for " + String(buff));    //  for invalid nvs lookups this returns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
 
       display.setFullWindow();    
       display.firstPage();
       do {
         display.fillScreen(GxEPD_BLACK);
-        display.drawBitmap(0, 0, volatileShowBuff, display.width(), display.height(), GxEPD_WHITE);
+        display.drawBitmap(0, 0, showBuff, display.width(), display.height(), GxEPD_WHITE);
       } while (display.nextPage());
 
       display.hibernate();   //  hibernate display to save power
@@ -247,15 +198,10 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
       xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-      if (strcmp(buff + 6, "local") == 0) {    //  for this do not send anything just save to local
-        prefs.putBytes("localL", volatileShowBuff, sizeof(volatileShowBuff));
+      if ( !strcmp(buff + 6, "local"   ) ) prefs.putBytes( "localL", volatileShowBuff, sizeof(volatileShowBuff));    //  when recipient is local just save to localL
+      if ( !strcmp(buff + 6, "profile" ) ) prefs.putBytes( "localP", volatileShowBuff, sizeof(volatileShowBuff));    //  when recipient is profile just save to localP
 
-        Serial.println("saved image to localL and going back to homescreen");    //  TODO make this a feedlog
-
-        xQueueSend(showQueue, "homeScreen", 0);    //  go to homescreen
-      } 
-
-      else {    //  here actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
@@ -268,7 +214,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         //if (strncmp(buff, "sendq ", 6) == 0) chachapoly.addAuthData("look here", 9);    //  TODO this is optional right to find listenig peers querey peers with 'sendq' this is authenticated but not encrypted
         //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
-        if ( strncmp(buff, "sendv ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile for non 'sendv' eg 'senda' or 'sendq'
+        if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("profile", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
         if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  with 'sendv' send current foto
 
         chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
@@ -278,11 +224,9 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
         memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  then foto
 
-        if (!strncmp(buff, "query ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "you there", 9);    //  query for listening peers  TODO send hash of peers profile to minimize messages
-        if (!strncmp(buff, "rsvp ", 5))  memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "sure sure", 9);    //  aswer as listening
-        if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  this indicates that we send a foto
-        if (!strncmp(buff, "annoy ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  this indicates that we send a profile
-
+        if (!strncmp(buff, "sendp ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  send our profile with 'look here' appendix    TODO send hash of peers profile to minimize messages
+        if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  send foto with 'see this ' appendix
+        
         Serial.println("packed payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
 
         mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
@@ -308,7 +252,35 @@ void initmqtt(){    //  handle incoming mqtt
     if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
     if ( !memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
     
-    Serial.println("got message");
+    Serial.println("got message start decoding");
+
+    uint8_t hkdf[32]; prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
+    uint8_t iv[12]; memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
+    uint8_t tag[16]; memcpy(tag, payload + 12, 16);    //  tag starts after iv and is 16 bytes long
+    uint8_t cyphy[15000]; memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text starts after iv and tag so and is 15000 bytes long
+
+    Serial.println("Received message on topic: " + String(topic) );
+    
+    chachapoly.setIV(iv, 12);
+    chachapoly.setKey(hkdf, 32);
+    chachapoly.decrypt(cyphy, cyphy, 15000);
+
+    if ( chachapoly.checkTag(tag, 16) && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
+      uint8_t currentProfile[15000]; prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
+      if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
+
+      xQueueSend(showQueue, (String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile
+      xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
+    }
+
+    if ( chachapoly.checkTag(tag, 16) && !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
+      prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
+      xQueueSend(showQueue, (String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto
+    }
+
+    chachapoly.clear();
+
+
 
     /*
     if ( memcmp("you there", payload + 12 + 16 + 15000, 9) ) {    //  here always responde with our profile    and perhaps save recieved profile to nvsalias+'P'    and when in homeScreen show recieved profile
@@ -342,21 +314,7 @@ void initmqtt(){    //  handle incoming mqtt
 
 
 
-    uint8_t hkdf[32] = ;
 
-    uint8_t 
-    uint8_t cyphy[15000] = ;
-    uint8_t tag[16] = ;
-
-    Serial.println("Received message on topic: " + String(topic) );
-    
-    chachapoly.setIV( , 12);
-    chachapoly.setKey( , 32);
-    
-    chachapoly.decrypt(cyphy, , 15000);
-
-    chachapoly.checkTag(tag, 16);
-    chachapoly.clear();
       
       // decode message here topic minus fpaper/ is the nvsalias so to get correct key use getBytes() with topic.substring(8)+'H' this gives hkdf of corosponding peer
    
@@ -535,11 +493,13 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("user ") == 0 ) {
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
+  /*  TODO remove this this is not the way to set profile picture anymore
   if( msg.indexOf("profile ") == 0){
     prefs.putBytes("localP", volatileShowBuff, sizeof(volatileShowBuff));    //  store personal profile picture in nvs as 'localP'
     feedlog("saved your profile picture");
     xQueueSend(showQueue, "homeScreen", 0); return;    // return to home screen this cycles through latest fotos
   }
+  */
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
     uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
@@ -554,56 +514,6 @@ void recv( String msg ){    //  this uses string likely char array is better see
     
     prefs.putBytes((nvsalias + "H").c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
     feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'"); return;
-
-
-
-    /*
-
-
-    while uploading/choosing foto 
-      (->  dont show incoming fotos while uploading/choosing foto just store them in nvs)
-      ->  start pinging every nvsalias for their profile picture
-        -> upload complete
-          -> show uploaded foto
-          -> exit with set personal profile picture command
-          -> longpress cycles through profile fotos of pongs and own profile foto
-          -> short click sends foto to profile picture with corosponding encryption or on own profile picture sets it to local display
-     (-> exit unsresponsive state when user exits without uploading a foto)
- 
-
-    while not uploading/choosing foto
-      ->  responde to pings with own profile picture
-           -> move servo and when reciving a image and show image (flash sender profile picture)
-
-      ->  when recieving a wave
-          -> move servo and flash profile picture of sender
-
-      ->  short click sends short wave to current picture
-      ->  long press cycles through latest image of each peer (flash profile picture of sender on change)
-
-
-    
-    
-    ->  store most recent uploaded foto either in buffer (or nvs)
-
-    ->  Mqtt subscribe to every nvsalias
-    
-    ->  add command to set current photo as profile picture 
-    
-    ->  each nvsalias has to have these nvs: latest photo, profile picture, encryption hkdf , (hash of profile foto)
-    
-    ->  local profile has to have these nvs: latest photo, profile picture, (hash of profile foto)
-    
-    (->  How do i hash the profile foto and only send profile foto on change?)
-
-    (-> posebilety to delet specific peer and all its related data)
-
-    */
-
-
-
-
-
 
 
 
@@ -695,15 +605,15 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
   server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", prefs.getString("peers", "local "));    //  send current peers list
+    request->send(200, "text/plain", "profile " + prefs.getString("peers", "local ") );    //  send current peers list
   });
+
 
   server.on("/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
     static String targetPeer = "";    // static to persist across chunks
-
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
@@ -718,7 +628,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       memcpy(volatileShowBuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){
-      xQueueSend(showQueue, "sendScreen", 0);
+      if (targetPeer != "local"   ) xQueueSend(sendmqttQueue, ("sendp " + targetPeer).c_str(), 0);    //  send personal profile to peer but not to local
+      if (targetPeer != "profile" ) xQueueSend(sendmqttQueue, ("sendv " + targetPeer).c_str(), 0);    //  send preped volatile buffer to peer but not to profile
     }
   });
 
@@ -732,17 +643,29 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
+String peerString = prefs.getString("peers", "local");
+String currpeer = "local";    //  start locally
 InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
 void initflanks() {
+
   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
-    xQueueSend(showQueue, "proceede", 0);    //  show volatile buffer on longpress
+    if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) currpeer = "local";   //  account for trailing space here test for last peer and wrap
+    else currpeer = peerString.substring(peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
+
+    xQueueSend(showQueue, (currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
+    xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+
+
+    //xQueueSend(showQueue, "proceede", 0);    //  show volatile buffer on longpress
     //xQueueSend(servoQueue, "top", 0); 
     //xQueueSend(sendmqttQueue, "look here", 0);
     //String peers = prefs.getString("peers", "none");
     //int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
   });
+
   belowus.bind(Event_DoubleClick, [](){
-    xQueueSend(showQueue, "send", 0);    //  show volatile buffer on longpress
+    xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  just annoy peer with profile
+    //xQueueSend(showQueue, "send", 0);    //  show volatile buffer on longpress
   });
 }
 
@@ -760,7 +683,7 @@ void setup() {
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
   initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
   initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
-  xTaskCreate( showTas, "showTas", 4096, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
+  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
 
   feedlog("init done");
 
