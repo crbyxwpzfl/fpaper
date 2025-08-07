@@ -702,10 +702,13 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
+    static String targetPeer = "";    // static to persist across chunks
+
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
-      feedlog("file is for " + request->getParam("peer")->value());
+      targetPeer = request->getParam("peer")->value();
+      feedlog("file is for " + targetPeer);
     }
     if (len + index > sizeof(volatileShowBuff)) {
       feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
