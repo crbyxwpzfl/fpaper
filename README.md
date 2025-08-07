@@ -2,14 +2,37 @@
 
 
 
+# how do you feel about auto updates
+
+
+
 # fpaper
 
+todo - boot into local profile/latest
 
-TODO - in index.html make images open with constant width
+todo - fix/set currpeer when recieved/show profile/latest
 
-TODO - fix website for chrome
+todo - in index.html make images open with constant width
 
-Vision - use encryption of nvs, add clear names for peers, revise website eg grey terminal like text input and drag and drop images, revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs), convert global stuff to pointers eg sendBuff, fix feedlog and serial print so serial needs \r\n i guess.
+todo - fix website for chrome
+
+planed - fix feedlog and serial print so serial needs \r\n i guess
+
+vision - stop using derived/unique adresses fully annymise conversation
+
+vision - add clear names for peers perhaps A B system
+
+vision - redesign website eg grey terminal like text input and drag and drop images
+
+vision - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
+
+vision - convert global stuff to pointers eg sendBuff
+
+vision - use encryption of nvs
+
+vision - add peers dynamicly/without restart
+
+
 
 this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
 ```
