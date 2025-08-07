@@ -90,10 +90,23 @@
             pointer-events: none;
             border-radius: 0.5rem;
         }
-        #sendBtn {
+        #peerButtonsContainer {
             position: absolute;
             z-index: 10;
             /* Remove right/bottom, use JS for pixel positioning */
+            display: none;
+            flex-direction: column;
+            gap: 0.25rem;
+            /* Fixed size, do not scale with overlay */
+            width: auto;
+            height: auto;
+            min-width: 1px;
+            min-height: 1px;
+            /* Prevent scaling */
+            transform: none !important;
+        }
+        
+        .peer-btn {
             background: #0067f4;
             color: #fff;
             border: none;
@@ -102,7 +115,8 @@
             font-size: 1rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             cursor: pointer;
-            display: none;
+            white-space: nowrap;
+            min-width: 60px;
             /* Fixed size, do not scale with overlay */
             width: auto;
             height: auto;
@@ -110,6 +124,10 @@
             min-height: 1px;
             /* Prevent scaling */
             transform: none !important;
+        }
+        
+        .peer-btn:hover {
+            background: #0056d3;
         }
 
         /* 
@@ -154,7 +172,9 @@
                 <img id="popupImage" src="#" alt="your image" style="display:none;" />
                 <canvas id="ditheredOverlay" width="300" height="400" style="display:none;"></canvas>
                 <div id="region" style="display:none;"></div>
-                <button id="sendBtn">SEND</button>
+                <div id="peerButtonsContainer">
+                    <!-- Peer buttons will be added dynamically here -->
+                </div>
             </div>
         </div>
     </div>
@@ -186,6 +206,9 @@
             document.getElementById('imgInput').click();
         });
         document.getElementById('imgInput').addEventListener('change', handleImageFile);
+        
+        // Query peers when the page loads
+        queryPeers();
     }
     function initCommandHistory() {
         const json = localStorage.history;
@@ -523,17 +546,91 @@
     const popupImage = document.getElementById('popupImage');
     const region = document.getElementById('region');
     const ditheredOverlay = document.getElementById('ditheredOverlay');
-    const sendBtn = document.getElementById('sendBtn');
+    const peerButtonsContainer = document.getElementById('peerButtonsContainer');
+    let peers = ['local']; // Default peer list
     let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
     let regionData = {left: 50, top: 50, width: 150, height: 200}; // default 3:4
     let imgRect = null;
     let lastTouchDist = null;
+    
+    // Function to query peers from ESP
+    async function queryPeers() {
+        try {
+            const response = await fetch('/queryPeers');
+            const peersText = await response.text();
+            // Parse space-separated peer list (includes trailing space)
+            peers = peersText.trim().split(/\s+/).filter(peer => peer.length > 0);
+            if (peers.length === 0) {
+                peers = ['local']; // Fallback to default
+            }
+            console.log('Available peers:', peers);
+        } catch (error) {
+            console.error('Failed to query peers:', error);
+            peers = ['local']; // Fallback to default
+        }
+    }
+    
+    // Function to create peer buttons
+    function createPeerButtons() {
+        peerButtonsContainer.innerHTML = '';
+        peers.forEach(peer => {
+            const button = document.createElement('button');
+            button.className = 'peer-btn';
+            button.textContent = peer;
+            button.addEventListener('click', () => sendToPeer(peer));
+            peerButtonsContainer.appendChild(button);
+        });
+    }
+    
+    // Function to send image data to a specific peer
+    function sendToPeer(peer) {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 300; tempCanvas.height = 400;
+        const tempCtx = tempCanvas.getContext('2d');
+        const scaleX = popupImage.naturalWidth / popupImage.width;
+        const scaleY = popupImage.naturalHeight / popupImage.height;
+        const sx = regionData.left * scaleX;
+        const sy = regionData.top * scaleY;
+        const sw = regionData.width * scaleX;
+        const sh = regionData.height * scaleY;
+        tempCtx.save();
+        tempCtx.translate(150, 200);
+        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 300, 400);
+        tempCtx.restore();
+        dithering(tempCtx, 300, 400, 128, 3);
+        const bytes = canvas2bytes(tempCanvas, 'bw');
+        const byteArray = new Uint8Array(bytes);
+        const blob = new Blob([byteArray], {type: 'application/octet-stream'});
+        const formData = new FormData();
+        formData.append('file', blob, 'image.bin');
+        formData.append('peer', peer); // Add peer information
+        
+        const endpoint = peer === 'local' ? '/file' : `/file?peer=${encodeURIComponent(peer)}`;
+        fetch(endpoint, { method: 'POST', body: formData })
+            .then(response => {
+                if (response.ok) {
+                    console.log(`Image sent to ${peer} successfully`);
+                } else {
+                    console.error(`Failed to send image to ${peer}`);
+                }
+            })
+            .catch(error => {
+                console.error(`Error sending to ${peer}:`, error);
+            });
+        closeOverlay();
+    }
     function handleImageFile(evt) {
         const [file] = evt.target.files;
         if (file) {
             popupImage.src = URL.createObjectURL(file);
             popupImage.style.display = 'block';
             imgOverlayBg.style.display = 'flex';
+            
+            // Query peers when image is selected
+            queryPeers().then(() => {
+                createPeerButtons();
+            });
+            
             popupImage.onload = () => {
                 // scale image by orientation to avoid stretching
                 // also just max-heigth and max-width does not work since small images wont get scaled up to their max height/width
@@ -570,7 +667,7 @@
                 };
                 region.style.display = 'block';
                 ditheredOverlay.style.display = 'block';
-                sendBtn.style.display = 'block';
+                peerButtonsContainer.style.display = 'flex';
                 updateRegion();
             };
         }
@@ -588,10 +685,10 @@
         ditheredOverlay.style.width = regionData.width + 'px';
         ditheredOverlay.style.height = regionData.height + 'px';
         ditheredOverlay.style.display = 'block';
-        // Position SEND button at bottom right of overlay region, fixed size
-        sendBtn.style.left = (regionData.left + regionData.width - sendBtn.offsetWidth + 10 ) + 'px';
-        sendBtn.style.top = (regionData.top + regionData.height - sendBtn.offsetHeight + 20 ) + 'px';
-        sendBtn.style.display = 'block';
+        // Position peer buttons container at bottom right of overlay region, fixed size
+        peerButtonsContainer.style.left = (regionData.left + regionData.width - 70) + 'px';
+        peerButtonsContainer.style.top = (regionData.top + regionData.height - (peers.length * 40) + 10) + 'px';
+        peerButtonsContainer.style.display = 'flex';
         if (popupImage.src && popupImage.complete && regionData.width > 0 && regionData.height > 0) {
             const scaleX = popupImage.naturalWidth / popupImage.width;
             const scaleY = popupImage.naturalHeight / popupImage.height;
@@ -717,30 +814,6 @@
         resizing = false;
         e.preventDefault();
     }, { passive: false });
-    // SEND button logic
-    sendBtn.addEventListener('click', function() {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 300; tempCanvas.height = 400;
-        const tempCtx = tempCanvas.getContext('2d');
-        const scaleX = popupImage.naturalWidth / popupImage.width;
-        const scaleY = popupImage.naturalHeight / popupImage.height;
-        const sx = regionData.left * scaleX;
-        const sy = regionData.top * scaleY;
-        const sw = regionData.width * scaleX;
-        const sh = regionData.height * scaleY;
-        tempCtx.save();
-        tempCtx.translate(150, 200);
-        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 300, 400);
-        tempCtx.restore();
-        dithering(tempCtx, 300, 400, 128, 3);
-        const bytes = canvas2bytes(tempCanvas, 'bw');
-        const byteArray = new Uint8Array(bytes);
-        const blob = new Blob([byteArray], {type: 'application/octet-stream'});
-        const formData = new FormData();
-        formData.append('file', blob, 'image.bin');
-        fetch('/file', { method: 'POST', body: formData });
-        closeOverlay();
-    });
     // Close overlay on click outside
     imgOverlayBg.addEventListener('mousedown', function(e) {
         if (e.target === imgOverlayBg) closeOverlay();
@@ -754,7 +827,7 @@
         popupImage.style.display = 'none';
         region.style.display = 'none';
         ditheredOverlay.style.display = 'none';
-        sendBtn.style.display = 'none';
+        peerButtonsContainer.style.display = 'none';
     }
     </script>
 </body>

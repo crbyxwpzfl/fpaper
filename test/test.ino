@@ -28,6 +28,8 @@
 
 
 
+
+
 #include <Arduino.h>    // all this is arduino for an esp32    so compared to c some delacrations are missing but im not sure 
 #include <Preferences.h>
 #include <HTTPClient.h>
@@ -297,16 +299,6 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
 
 
-
-/*
-
-  blow us we have to find a solution for how to queue incoming profile pictures and how to determine/set nex peer list for sendscreen
-
-*/
-
-
-
-
 //Preferences prefs;    //  commented so no redfinition error
 //PsychicMqttClient mqttClient;    //  commented so no redfinition error
 void initmqtt(){    //  handle incoming mqtt
@@ -316,7 +308,9 @@ void initmqtt(){    //  handle incoming mqtt
     if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
     if ( !memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
     
+    Serial.println("got message");
 
+    /*
     if ( memcmp("you there", payload + 12 + 16 + 15000, 9) ) {    //  here always responde with our profile    and perhaps save recieved profile to nvsalias+'P'    and when in homeScreen show recieved profile
       xQueueSend(sendmqttQueue, "senda " + String(topic).substring(7) , 0);    //  responde to peer with our profile and apendix '..show me'
 
@@ -344,7 +338,7 @@ void initmqtt(){    //  handle incoming mqtt
       return;
     }
 
-
+    
 
 
 
@@ -365,10 +359,12 @@ void initmqtt(){    //  handle incoming mqtt
     chachapoly.clear();
       
       // decode message here topic minus fpaper/ is the nvsalias so to get correct key use getBytes() with topic.substring(8)+'H' this gives hkdf of corosponding peer
-    
+   
+      */
+
+
   });
   
-
 
   /*
   mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
@@ -698,13 +694,18 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   WebSerial.begin(&server);    //  init webserial
 
 
-  server.on("/file", HTTP_POST, 
+  server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/plain", prefs.getString("peers", "local "));    //  send current peers list
+  });
+
+  server.on("/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
+      feedlog("file is for " + request->getParam("peer")->value());
     }
     if (len + index > sizeof(volatileShowBuff)) {
       feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
