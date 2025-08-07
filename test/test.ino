@@ -197,8 +197,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
       xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-      if ( !strcmp(buff + 6, "local"   ) ) prefs.putBytes( "localL", sendBuff, sizeof(sendBuff));    //  when recipient is local just save to localL
-      if ( !strcmp(buff + 6, "profile" ) ) prefs.putBytes( "localP", sendBuff, sizeof(sendBuff));    //  when recipient is profile just save to localP
+      if ( !strcmp(buff, "sendv local"   ) ) prefs.putBytes( "localL", sendBuff, sizeof(sendBuff));    //  ignore sendps here so no overwrites for annyos and only save once for usual send
+      if ( !strcmp(buff, "sendv profile" ) ) prefs.putBytes( "localP", sendBuff, sizeof(sendBuff));    //  when recipient profile save to localP when local save to localL
 
       if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
@@ -213,7 +213,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         //if (strncmp(buff, "sendq ", 6) == 0) chachapoly.addAuthData("look here", 9);    //  TODO this is optional right to find listenig peers querey peers with 'sendq' this is authenticated but not encrypted
         //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
-        if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("profile", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
+        if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
         if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, sendBuff, 15000);    //  with 'sendv' send current foto
 
         chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
@@ -231,12 +231,10 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
 
         free(payload);
-
-        if (!strncmp(buff, "sendv ", 6)) xQueueSend(showQueue, "homeScreen", 0);    //  only return home for sendv
       }
 
     }
-    vTaskDelay(1000);    // just send every second
+    vTaskDelay(4000);    // just send every two second so we have enugh time to filter out our echos with curriv
   }
 }
 
@@ -249,24 +247,29 @@ void initmqtt(){    //  handle incoming mqtt
 
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
-    if ( !memcmp(curriv, payload, 12)) return;    //  when message was our own message ignore it
+    if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message ignore it
     
-    Serial.println("got message start decoding");
+    feedlog("got message start decoding");
 
-    uint8_t hkdf[32]; prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
-    uint8_t iv[12]; memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
-    uint8_t tag[16]; memcpy(tag, payload + 12, 16);    //  tag starts after iv and is 16 bytes long
-    uint8_t cyphy[15000]; memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text starts after iv and tag so and is 15000 bytes long
+    uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
+    uint8_t* iv = (uint8_t*)malloc(12); memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
+    uint8_t* tag = (uint8_t*)malloc(16); memcpy(tag, payload + 12, 16);    //  tag starts after iv and is 16 bytes long
+    uint8_t* cyphy = (uint8_t*)malloc(15000); memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text starts after iv and tag so and is 15000 bytes long
 
-    Serial.println("Received message on topic: " + String(topic) );
+    feedlog("Received message on topic: " + String(topic) );
     
-    chachapoly.setIV(iv, 12);
-    chachapoly.setKey(hkdf, 32);
-    chachapoly.decrypt(cyphy, cyphy, 15000);
+    chachapoly.setIV(iv, 12);     feedlog(" set iv");
+    chachapoly.setKey(hkdf, 32);      feedlog(" set key");
+    chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
 
     if ( chachapoly.checkTag(tag, 16) && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-      uint8_t currentProfile[15000]; prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
+      uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
+      
+      feedlog("encryption successfull");
+
       if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
+      
+      free(currentProfile);
 
       xQueueSend(showQueue, (String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile
       xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
@@ -276,9 +279,7 @@ void initmqtt(){    //  handle incoming mqtt
       prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
       xQueueSend(showQueue, (String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto
     }
-
-    chachapoly.clear();
-
+    chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
 
 
     /*
@@ -627,8 +628,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       memcpy(sendBuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){
-      if (targetPeer != "local"   ) xQueueSend(sendmqttQueue, ("sendp " + targetPeer).c_str(), 0);    //  send personal profile to peer but not to local
-      if (targetPeer != "profile" ) xQueueSend(sendmqttQueue, ("sendv " + targetPeer).c_str(), 0);    //  send preped volatile buffer to peer but not to profile
+      xQueueSend(sendmqttQueue, ("sendp " + targetPeer).c_str(), 0);    //  send personal profile to peer
+      xQueueSend(sendmqttQueue, ("sendv " + targetPeer).c_str(), 0);    //  send preped volatile buffer to peer
     }
   });
 
@@ -642,14 +643,18 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
-String peerString = prefs.getString("peers", "local");
 String currpeer = "local";    //  start locally
-InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
+//InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
+InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
 void initflanks() {
 
   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
+    String peerString = prefs.getString("peers", "local");
+    
     if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) currpeer = "local";   //  account for trailing space here test for last peer and wrap
-    else currpeer = peerString.substring(peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
+    else currpeer = peerString.substring( peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
+
+    Serial.println("current peer is " + currpeer + " now queueing currpeer p and L");    //  print current peer to serial
 
     xQueueSend(showQueue, (currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
     xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
