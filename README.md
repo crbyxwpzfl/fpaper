@@ -20,6 +20,8 @@ todo - fix website for chrome
 
 planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib 
 
+vision - forward secrecy and somthing like diffi hellman/new hope/kyber
+
 vision - stop using derived/unique adresses fully annymise conversation
 
 vision - add clear names for peers perhaps A B system
