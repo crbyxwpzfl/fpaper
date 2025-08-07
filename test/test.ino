@@ -261,11 +261,12 @@ void initmqtt(){    //  handle incoming mqtt
     chachapoly.setIV(iv, 12);     feedlog(" set iv");
     chachapoly.setKey(hkdf, 32);      feedlog(" set key");
     chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
+    bool tagValid = chachapoly.checkTag(tag, 16);    //  check tag after decryption so we can see if decryption was successfull
 
-    if ( chachapoly.checkTag(tag, 16) && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
+    if ( tagValid && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
       uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
       
-      feedlog("encryption successfull");
+      feedlog("first decryption successfull");
 
       if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
       
@@ -275,8 +276,11 @@ void initmqtt(){    //  handle incoming mqtt
       xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
     }
 
-    if ( chachapoly.checkTag(tag, 16) && !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
+    if ( tagValid && !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
       prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
+      
+      feedlog("second decryption successfull");
+
       xQueueSend(showQueue, (String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto
     }
     chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
