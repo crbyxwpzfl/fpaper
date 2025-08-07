@@ -55,7 +55,7 @@
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
-static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free necessary images are of static size
+static uint8_t sendBuff[15000];  // global show buffer no malloc/free necessary images are of static size
 static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to ignore own message echos
 
 
@@ -84,7 +84,6 @@ Preferences prefs;    //  first declaration of preferences as perfs
 TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
-//static uint8_t volatileShowBuff[15000];  // global show buffer no malloc/free necessary images are of static size
 void showTas(void *parameter) {    //  this handles servo movement
   showQueue = xQueueCreate(5, 15);    // create queue with buffer of 5 with length of nvsalias so 15 chars
  
@@ -100,7 +99,7 @@ void showTas(void *parameter) {    //  this handles servo movement
     if(!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       xQueueReceive(showQueue, &buff, 0);
 
-      if (!prefs.getBytes( buff, showBuff, 15000 )) Serial.println("nothing found for " + String(buff));    //  for invalid nvs lookups this returns null and leaves volatileShowBuff so to directly show volatileShowBuff here as per convetion just queue 'showVolatile'
+      if (!prefs.getBytes( buff, showBuff, 15000 ))  Serial.println("nothing found for " + String(buff));    //  for invalid nvs lookups this returns null and leaves showBuff
 
       display.setFullWindow();    
       display.firstPage();
@@ -198,8 +197,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
       xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-      if ( !strcmp(buff + 6, "local"   ) ) prefs.putBytes( "localL", volatileShowBuff, sizeof(volatileShowBuff));    //  when recipient is local just save to localL
-      if ( !strcmp(buff + 6, "profile" ) ) prefs.putBytes( "localP", volatileShowBuff, sizeof(volatileShowBuff));    //  when recipient is profile just save to localP
+      if ( !strcmp(buff + 6, "local"   ) ) prefs.putBytes( "localL", sendBuff, sizeof(sendBuff));    //  when recipient is local just save to localL
+      if ( !strcmp(buff + 6, "profile" ) ) prefs.putBytes( "localP", sendBuff, sizeof(sendBuff));    //  when recipient is profile just save to localP
 
       if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
@@ -215,7 +214,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
         if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("profile", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
-        if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileShowBuff, 15000);    //  with 'sendv' send current foto
+        if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, sendBuff, 15000);    //  with 'sendv' send current foto
 
         chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
         chachapoly.clear();
@@ -495,7 +494,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
   }
   /*  TODO remove this this is not the way to set profile picture anymore
   if( msg.indexOf("profile ") == 0){
-    prefs.putBytes("localP", volatileShowBuff, sizeof(volatileShowBuff));    //  store personal profile picture in nvs as 'localP'
+    prefs.putBytes("localP", sendBuff, sizeof(sendBuff));    //  store personal profile picture in nvs as 'localP'
     feedlog("saved your profile picture");
     xQueueSend(showQueue, "homeScreen", 0); return;    // return to home screen this cycles through latest fotos
   }
@@ -620,12 +619,12 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       targetPeer = request->getParam("peer")->value();
       feedlog("file is for " + targetPeer);
     }
-    if (len + index > sizeof(volatileShowBuff)) {
+    if (len + index > sizeof(sendBuff)) {
       feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
     }
     else if (len) {
       feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
-      memcpy(volatileShowBuff + index, data, len);    //  copy data to volatile buffer
+      memcpy(sendBuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){
       if (targetPeer != "local"   ) xQueueSend(sendmqttQueue, ("sendp " + targetPeer).c_str(), 0);    //  send personal profile to peer but not to local
@@ -687,8 +686,10 @@ void setup() {
 
   feedlog("init done");
 
-  memcpy_P(volatileShowBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
-  xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
+
+  // TODO add a boot screen of some sort currently the showTas does not support this 
+  //memcpy_P(sendBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
+  //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 
 
   if (receivedImageBuffer) {
