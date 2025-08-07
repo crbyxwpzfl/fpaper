@@ -7,6 +7,8 @@
 
 TODO - in index.html make images open with constant width
 
+TODO - fix website for chrome
+
 Vision - use encryption of nvs, add clear names for peers, revise website eg grey terminal like text input and drag and drop images, revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs), convert global stuff to pointers eg sendBuff 
 
 this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
