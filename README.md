@@ -8,6 +8,8 @@
 
 # fpaper
 
+todo - each button own quick foto
+
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
 
 todo - boot into local profile/latest
