@@ -1,5 +1,8 @@
-#### https://github.com/javl/image2cpp - the dithering is so cool javl
 
+#### https://github.com/Elecrow-RD/CrowPanel-ESP32-4.2-E-paper-HMI-Display-with-400-300 - original files/docs
+#### https://github.com/javl/image2cpp - the dithering is so cool javl
+#### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
+#### rest - is ai and me
 
 
 # how do you feel about auto updates
