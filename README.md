@@ -5,11 +5,7 @@
 #### rest - is ai and me
 
 
-# how do you feel about auto updates
-
-
-
-# fpaper
+todo - how do you feel about auto updates
 
 todo - each button own quick foto
 
