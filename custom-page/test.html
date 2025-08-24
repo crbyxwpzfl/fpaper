@@ -31,13 +31,17 @@
     .pannel #record .terminal-output-line, .pannel #record .prompt-line { text-align:left; }
     .terminal-output-line { white-space: pre-wrap; word-break: break-word; }
     .prompt-line { display:block; }
-    .prompt { color:rgb(0, 0, 0); }
-    .prompt-input { outline:none; display:inline-block; min-width:1ch; caret-color:#000000; }
+    /* Serial output lines remain default (black via container); explicitly set for clarity */
+    .terminal-output-line { color:#0000006e; }
+    /* Prompt symbol color */
+    .prompt { color:#000000; }
+    /* User input (current and historical commands) color */
+    .prompt-input { outline:none; display:inline-block; min-width:1ch; color:#000000; caret-color:#000000; }
     .prompt-input:empty:before { content:"\00a0"; }
     #record:focus { outline:none; }
         #control-button { position: absolute; top: 0.5rem; right: 0.5rem; }
         #control-button button { background-color: #e3e3e3; }    /* top right corner buttons */
-        .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: rgb(207, 207, 207); }
+        .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: rgb(212, 32, 32); }
         .footer { padding: 1rem 0.5rem; background-color: rgb(255, 255, 255); }
         .copyright { padding-bottom: 1rem; }
         .float-left { float: left; }
