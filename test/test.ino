@@ -61,25 +61,6 @@ static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to
 
 
 
-// --- TODO solwley get rid of these these just was for testing
-//Preferences prefs;    //  commented so no redfinition error
-#define IMAGE_WIDTH 400
-#define IMAGE_HEIGHT 300
-#define IMAGE_SIZE (IMAGE_WIDTH * IMAGE_HEIGHT / 8) // 1-bit per pixel
-
-uint8_t* imageBuffer = nullptr; // Pointer to store the uploaded image
-size_t imageBufferOffset = 0;   // Offset to track the current position in the buffer
-
-uint8_t* receivedImageBuffer = nullptr; // Pointer to store received image data
-size_t receivedImageSize = 0;           // Size of received image data
-  
-
-
-
-
-
-
-
 Preferences prefs;    //  first declaration of preferences as perfs
 TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
@@ -138,12 +119,8 @@ void ledTas(void *parameter) {    //  this handles led user feedback
 
     } else {        //  idel pulse led while nothing to do
       xQueuePeek(ackQueue, &openacks, 0);    //  this looks for open acks also leaves value in queueand
-      
-      // idel pulse disabled for now its just anoying
-      
-      // if (millis() - lastpulse > 60000) { idlepulse++; neoled.fill(neoled.Color(idlepulse * (openacks != 0), idlepulse, idlepulse * (openacks != 0))); neoled.show(); if(idlepulse == 40) { idlepulse = -40; lastpulse = millis(); }; vTaskDelay(30);}    //  this inits green pulse when no openacks and white pulse when still open acks every 60s 
-      // if (idlepulse < 0) { idlepulse++; neoled.fill(neoled.Color(-idlepulse * (openacks != 0), -idlepulse, -idlepulse * (openacks != 0))); neoled.show(); vTaskDelay(40);}    //  this stops pulse when idlepulse reaches 0
     }
+
     vTaskDelay(1);
   }
 }
@@ -151,8 +128,7 @@ void ledTas(void *parameter) {    //  this handles led user feedback
 
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
 //Preferences prefs;    //  commented so no redfinition error
-void feedlog(String text, int r = 0, int g = 0, int b = 0, int t = 0, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
-  if (r != 0 || g != 0 || b != 0 || t != 0) { struct ledfeedback{ int r; int g; int b; int t; }; } // no led feedback! for now ledfeedback ledc = {r, g, b, t}; xQueueSend(ledQueue, &ledc, 0); }    //  send led color to queue
+void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
   if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
     Serial.print(text);    // TODO add \r\n here so each line is printed correctly
     WebSerial.print(text.c_str()); 
@@ -285,130 +261,7 @@ void initmqtt(){    //  handle incoming mqtt
     }
     chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
 
-
-    /*
-    if ( memcmp("you there", payload + 12 + 16 + 15000, 9) ) {    //  here always responde with our profile    and perhaps save recieved profile to nvsalias+'P'    and when in homeScreen show recieved profile
-      xQueueSend(sendmqttQueue, "senda " + String(topic).substring(7) , 0);    //  responde to peer with our profile and apendix '..show me'
-
-      return; 
-    }
-
-
-    
-    if ( memcmp("sure sure", payload + 12 + 16 + 15000, 9) ) {    //  here queue recieved profile to sendScreen    and perhaps save recieved profile to nvsalias+'P'
-    
-      return; 
-    }
-
-
-
-    if ( memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here always save the recieved foto to nvsalias+'L'    and when in homeScreen show foto
-    
-      return;
-    }
-
-
-
-    if ( memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here when in homeScreen show recieved profile    and perhaps save recieved profile to nvsalias+'P'
-    
-      return;
-    }
-
-    
-
-
-
-
-      
-      // decode message here topic minus fpaper/ is the nvsalias so to get correct key use getBytes() with topic.substring(8)+'H' this gives hkdf of corosponding peer
-   
-      */
-
-
   });
-  
-
-  /*
-  mqttClient.onTopic( prefs.getString("mqtop", "/fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here so listen to everything on level deep 
-       Serial.printf("Received message on topic: %s\n", topic);
-
-            // Check if this is binary image data (not text messages)
-      if (strstr(topic, "/fpaper/test") != NULL) {
-        // This is binary image data
-        Serial.printf("Received binary data on topic: %s\n", topic);
-        
-        // For binary data, we need to determine actual size differently
-        // Since strlen() stops at null bytes, let's assume 15KB for now
-        const size_t EXPECTED_IMAGE_SIZE = 15000; // 15KB
-        
-        // Print first few bytes to serial console
-        Serial.print("First bytes (hex): ");
-        for (int i = 0; i < min(16, (int)strlen(payload)); i++) {
-          Serial.printf("%02X ", (uint8_t)payload[i]);
-        }
-        Serial.println();
-        
-        // Allocate PSRAM buffer for received image
-        if (receivedImageBuffer) {
-          free(receivedImageBuffer); // Free previous buffer
-        }
-        
-        //size_t payloadSize = strlen(payload); // For binary data, you might need a different approach
-        //receivedImageBuffer = (uint8_t*)ps_malloc(payloadSize);
-        receivedImageBuffer = (uint8_t*)ps_malloc(EXPECTED_IMAGE_SIZE);
-        
-        if (receivedImageBuffer) {
-          // Copy binary data to PSRAM buffer
-          //memcpy(receivedImageBuffer, payload, payloadSize);
-          //receivedImageSize = payloadSize;
-
-          memcpy(receivedImageBuffer, payload, EXPECTED_IMAGE_SIZE);
-          receivedImageSize = EXPECTED_IMAGE_SIZE;
-          
-          Serial.printf("Stored %zu bytes in PSRAM buffer\n", receivedImageSize);
-          
-          // Optional: Display received image on e-paper
-          if (receivedImageSize >= IMAGE_SIZE) {
-            display.setFullWindow();
-            display.firstPage();
-            do {
-              display.fillScreen(GxEPD_BLACK);
-              display.drawBitmap(0, 0, receivedImageBuffer, IMAGE_WIDTH, IMAGE_HEIGHT, GxEPD_WHITE);
-            } while (display.nextPage());
-            display.hibernate();
-            Serial.println("Received image displayed on e-paper");
-          }
-        } else {
-          Serial.println("Failed to allocate PSRAM for received image");
-        }
-        return; // Skip text message processing
-      }
-
-      if (strstr(payload, " says look here") != NULL) {
-        String sender = String(payload).substring(0, strstr(payload, " says look here") - payload), peers = prefs.getString("peers", "");    //  peer always is before ' says' so subtracting the base pointer of buf pointer gives length of substring containing peer
-        if ( ( peers.indexOf(sender) >= 0 || peers == "" ) && sender != prefs.getString("publ", String(ESP.getEfuseMac())) ) { xQueueSend(servoQueue, "top", 0); xQueueSend(sendmqttQueue, "shit", 0); }    //  when no peers set this moves servo with any sender but our self so we dont finger our self. alternative 'if (strstr(prefs.getString("peers").c_str(), sender.c_str()) != NULL)'
-      }
-      if (strstr(payload, " says shit") != NULL) { 
-        String sender = String(payload).substring(0, strstr(payload, " says shit") - payload), peers = prefs.getString("peers", "");
-        if (peers.indexOf(sender) >= 0) { int openacks; xQueuePeek(ackQueue, &openacks, 0); openacks--; xQueueOverwrite(ackQueue, &openacks); }    //  with ' || peers == "" ' this self acconoledges when no peers set
-      }
-      feedlog("mqtt recived " + String(payload), 0, 0, 0, 0, "debug");
-  
-    });
-
-    // only listen to everything but our self 
-
-  // Get the eFuse MAC as a string (12 hex digits, uppercase, no delimiters)
-  char macStr[13]; // 12 hex digits + null terminator
-  snprintf(macStr, sizeof(macStr), "%012llX", ESP.getEfuseMac());
-  // Build the topic string "/fpaper/<efusemac>"
-  String myTopic = String("/fpaper/") + macStr;
-  // Unsubscribe from "/fpaper/<efusemac>"
-  mqttClient.unsubscribe(myTopic.c_str());
-  
-  //mqttClient.unsubscribe("/fpaper/" + String(ESP.getEfuseMac()));
-  
-  */
 
   xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
   mqttClient.connect();
@@ -421,7 +274,7 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
   dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
   while(true){
     dnsServer.processNextRequest();
-    feedlog("hold led blue while in ap mode", 0, 0, 70, 100, "debug");
+    feedlog("hold led blue while in ap mode", "debug");
     vTaskDelay(10);
   }
 }
@@ -437,7 +290,7 @@ void tryair() {    //  this works with redirects and insecure https source 'http
   up.onStart([]() { feedlog("overwrite firmware init download \n"); });
   up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
   up.onError([](int err) { feedlog(  up.getLastErrorString() + " \n"); });
-  up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n", 117, 133, 3, 100 ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+  up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
   HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
   feedlog("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
 }
@@ -447,7 +300,7 @@ TaskHandle_t watermarkHandle;
 void printWatermarkTas(void *count){
   int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
   for (int i = 0; i < iter; i++) {
-      feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "', ledTas '" + String(uxTaskGetStackHighWaterMark(ledTasHandle)) + "'\n");
+      feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "'\n");
       vTaskDelay(1000);
   }
   feedlog("\n\n");
@@ -497,13 +350,6 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("user ") == 0 ) {
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
-  /*  TODO remove this this is not the way to set profile picture anymore
-  if( msg.indexOf("profile ") == 0){
-    prefs.putBytes("localP", sendBuff, sizeof(sendBuff));    //  store personal profile picture in nvs as 'localP'
-    feedlog("saved your profile picture");
-    xQueueSend(showQueue, "homeScreen", 0); return;    // return to home screen this cycles through latest fotos
-  }
-  */
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
     uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
@@ -567,7 +413,6 @@ void recv( String msg ){    //  this uses string likely char array is better see
     char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); feedlog(nvsfree);
     feedlog("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
     feedlog("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
-    int openacks; xQueuePeek(ackQueue, &openacks, 0); feedlog("open acks " + String(openacks) + " \n");
     if(WiFi.getMode() == WIFI_MODE_AP) { feedlog("local ip " + WiFi.softAPIP().toString() + " \n"); }
     if(WiFi.getMode() == WIFI_MODE_STA) { feedlog("local ip " + WiFi.localIP().toString() + " \n"); }
     char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); feedlog(macStr);    //  this is so tiedious pls help me do not know how to string
@@ -663,17 +508,10 @@ void initflanks() {
     xQueueSend(showQueue, (currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
     xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
 
-
-    //xQueueSend(showQueue, "proceede", 0);    //  show volatile buffer on longpress
-    //xQueueSend(servoQueue, "top", 0); 
-    //xQueueSend(sendmqttQueue, "look here", 0);
-    //String peers = prefs.getString("peers", "none");
-    //int openacks; xQueuePeek(ackQueue, &openacks, 0); for(int i=0; peers[i]; i++){if(peers[i] == ' '){openacks++;}}; xQueueOverwrite(ackQueue, &openacks);
   });
 
   belowus.bind(Event_DoubleClick, [](){
     xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  just annoy peer with profile
-    //xQueueSend(showQueue, "send", 0);    //  show volatile buffer on longpress
   });
 }
 
@@ -683,7 +521,6 @@ void setup() {
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff  
 
-  xTaskCreate( ledTas, "ledTas", 4096, NULL, 1, &ledTasHandle ); feedlog("init everything", 50, 50, 50, 2000, "debug");    //  spawn led task
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
 
   //tryair();    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
@@ -699,22 +536,6 @@ void setup() {
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(sendBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
   //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
-
-
-  if (receivedImageBuffer) {
-    free(receivedImageBuffer);
-    receivedImageBuffer = nullptr;
-  }
-  
-
-  //NEW
-  if (imageBuffer) {
-    free(imageBuffer);
-    imageBuffer = nullptr;
-  }
-  //END
-
 }
-
 
 void loop() { }
