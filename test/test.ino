@@ -97,35 +97,6 @@ void showTas(void *parameter) {    //  this handles servo movement
 }
 
 
-TaskHandle_t ledTasHandle;
-QueueHandle_t ledQueue, ackQueue;
-void ledTas(void *parameter) {    //  this handles led user feedback
-  
-  /* no led with new board 
-  Adafruit_NeoPixel neoled(1, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); neoled.begin(); neoled.clear();    //  init led and clear buffer
-  */
-  struct ledfeedback{ int r; int g; int b; int t; }; ledQueue = xQueueCreate(5, sizeof(ledfeedback));    // create queue passing the struct with rgb and time with a buffer of 5 and
-  ackQueue = xQueueCreate(1, sizeof(int)); int initack = 0; xQueueOverwrite(ackQueue, &initack);    // create queue with buffer of 1 to keep track of open acks
-  int idlepulse = 0, allack = 0, openacks; unsigned long lastpulse = millis();    //  idlepulse for pulse led when nothing to do either white so no acks pending or green all acks closed and lastpulse for interval of idelpulse
-
-
-  while(true){
-    if(!xQueueIsQueueEmptyFromISR( ledQueue )) {    //  just do sth when queue not empty
-      ledfeedback ledc; xQueueReceive(ledQueue, &ledc, 0);    //  reed rgbt into struct also this clears one buffer of queue
-      
-      /* no led with new board
-      neoled.fill(neoled.Color(ledc.r, ledc.g, ledc.b)); neoled.show(); vTaskDelay(ledc.t); neoled.clear(); neoled.show();    //  show color for t ms
-      */
-
-    } else {        //  idel pulse led while nothing to do
-      xQueuePeek(ackQueue, &openacks, 0);    //  this looks for open acks also leaves value in queueand
-    }
-
-    vTaskDelay(1);
-  }
-}
-
-
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
 //Preferences prefs;    //  commented so no redfinition error
 void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
