@@ -102,24 +102,14 @@ void showTas(void *parameter) {    //  this handles servo movement
         const int srcY0 = (srcH - ovH) / 2;  // 100
         const int destX = 50;  // user requested coordinates
         const int destY = 50;
-        const int radius = 12; // rounded corner radius in pixels
 
-        display.setPartialWindow(destX, destY, ovW, ovH);
+        display.setPartialWindow(50, 50, 100, 100);    //  numbers are xpos ypos width height
         display.firstPage();
         do {
           // draw pixels copied bitwise from PROGMEM epd_bitmap_xpwallp
           for (int y = 0; y < ovH; y++) {
             int srcY = srcY0 + y;
             for (int x = 0; x < ovW; x++) {
-              // Rounded corner mask: skip pixels outside quarter circles
-              bool skip = false;
-              int dx, dy;
-              if (x < radius && y < radius) { dx = radius - 1 - x; dy = radius - 1 - y; skip = (dx*dx + dy*dy) > radius*radius; }
-              else if (x >= ovW - radius && y < radius) { dx = x - (ovW - radius); dy = radius - 1 - y; skip = (dx*dx + dy*dy) > radius*radius; }
-              else if (x < radius && y >= ovH - radius) { dx = radius - 1 - x; dy = y - (ovH - radius); skip = (dx*dx + dy*dy) > radius*radius; }
-              else if (x >= ovW - radius && y >= ovH - radius) { dx = x - (ovW - radius); dy = y - (ovH - radius); skip = (dx*dx + dy*dy) > radius*radius; }
-              if (skip) continue; // leave background (previous full frame) creating rounded corner
-
               int srcX = srcX0 + x;
               int bitIndex = srcY * srcW + srcX;              // 1bpp linear index
               int byteIndex = bitIndex / 8;
