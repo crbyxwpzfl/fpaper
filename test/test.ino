@@ -120,12 +120,12 @@ void showTas(void *parameter) {    //  this handles servo movement
       if (strncmp(buff, "part", 4) == 0) {    //  show picture in picture (center 100x100 of currently loaded showBuff)
         const int srcW = 400;
         const int srcH = 300;
-        const int ovW = 100;
-        const int ovH = 100;
+        const int ovW = 230;
+        const int ovH = 200;
         const int srcX0 = (srcW - ovW) / 2;  // 150
         const int srcY0 = (srcH - ovH) / 2;  // 100
-        const int destX = 50;  // user requested coordinates
-        const int destY = 50;
+        const int destX = 30;  // user requested coordinates
+        const int destY = 30;
 
         display.setPartialWindow(destX, destY, ovW, ovH);    //  numbers are xpos ypos width height
         display.firstPage();
@@ -318,15 +318,18 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
 //Preferences prefs;    //  commented so no redfinition error
 WiFiClientSecure secureClient;
 HTTPUpdate up;
-void tryair() {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
-  String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
-  secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
-  up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
-  up.onStart([]() { feedlog("overwrite firmware init download \n"); });
-  up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
-  up.onError([](int err) { feedlog(  up.getLastErrorString() + " \n"); });
-  up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
-  HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
+void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
+  if( airlink ) {    //  only do this when airlink has value
+    prefs.putString("airlink", "");    //  disable airlink for next boot
+    //String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
+    secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
+    up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
+    up.onStart([]() { feedlog("overwrite firmware init download \n"); });
+    up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
+    up.onError([](int err) { feedlog(  up.getLastErrorString() + " \n"); });
+    up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+    HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
+  }
   feedlog("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
 }
 
@@ -433,7 +436,8 @@ void recv( String msg ){    //  this uses string likely char array is better see
     feedlog("restarting esp"); ESP.restart(); return;
   }
   if ( msg.indexOf("apt upgrade ") == 0 ) {
-    feedlog("'restart' to init upgrade of of '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
+    feedlog("'restart' to init upgrade with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
+    //feedlog("firmware link " + msg.substring(12) + " '\n" ); tryair( msg.substring(12) ); return;
   }
   if ( msg.indexOf("rm -rf") == 0 ) {
     prefs.clear(); feedlog("cleared preferences"); return;
@@ -570,8 +574,8 @@ void setup() {
 
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
 
-  //tryair();    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
-  
+  tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
+
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
   initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
   initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
@@ -579,6 +583,9 @@ void setup() {
 
   feedlog("init done");
 
+  delay(500);
+  
+  xQueueSend(showQueue, "fulllocalL", 0); // WHY DOES THIS NOT WORK????
 
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
