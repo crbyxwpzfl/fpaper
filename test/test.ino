@@ -55,9 +55,13 @@
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
-static uint8_t sendBuff[15000];  // global show buffer no malloc/free necessary images are of static size
+static uint8_t volatileBuff[15000];  // global show buffer no malloc/free necessary images are of static size
 static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to ignore own message echos
 
+
+String currpeer = "local";    //  initally show local
+String prep = "";    //  prepared peer when sendscreen timer runs out
+uint32_t sendscreents = 0;    //  timestamp when user opened sendscreen
 
 
 
@@ -66,9 +70,9 @@ TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
 void showTas(void *parameter) {    //  this handles servo movement
-  showQueue = xQueueCreate(5, 15);    // create queue with buffer of 5 with length of nvsalias so 15 chars
- 
-  char buff[] = "nvsalias length";    //  buffer to read from queue
+  showQueue = xQueueCreate(5, 20);    // create queue with buffer of 5 with length of nvsalias so 20 chars
+
+  char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
@@ -77,23 +81,43 @@ void showTas(void *parameter) {    //  this handles servo movement
   uint8_t showBuff[15000];
 
   while(true){
-    if(!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
+
+    if (sendscreents && (millis() - sendscreents) >= 5000) {    //  wait for 2 seconds hopefully this is wrap save
+
+      if (prep.indexOf("slot") == 0) {    //  when slot in prep then send slot to current peer
+        if (!prefs.getBytes(prep.c_str(), showBuff, 15000 ))  Serial.println("timer up found garbage for " + prep) ;    //  for invalid nvs lookups this returns null and leaves showBuff
+
+        memcpy(volatileBuff, showBuff, 15000);    //  copy showBuff to volatileBuff prepare buffer for send
+
+        xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  send profile to currpeer
+        xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0);    //  send prepared buffer to currpeer
+      }
+
+      else {    //  everything else is just a peer change so make prep the currpeer and display currpeer
+        prep = currpeer;
+        xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer    for now first show profile of next peer then do a full refresh with 'L'atest foto of next peer to also clear the partial overlay
+        xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+      }
+
+      sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen
+    }
+  
+    if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       xQueueReceive(showQueue, &buff, 0);
 
-      if (!prefs.getBytes( buff, showBuff, 15000 ))  Serial.println("nothing found for " + String(buff));    //  for invalid nvs lookups this returns null and leaves showBuff
+      if (!prefs.getBytes( String(buff).substring(4, 15).c_str(), showBuff, 15000 ))  Serial.println("nothing found for " + String(buff).substring(4, 15)) ;    //  for invalid nvs lookups this returns null and leaves showBuff
 
-      display.setFullWindow();    
-      display.firstPage();
-      do {
-        display.fillScreen(GxEPD_BLACK);
-        display.drawBitmap(0, 0, showBuff, display.width(), display.height(), GxEPD_WHITE);
-      } while (display.nextPage());
+      if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
+        display.setFullWindow();
+        display.firstPage();
+        do {
+          display.fillScreen(GxEPD_BLACK);
+          display.drawBitmap(0, 0, showBuff, display.width(), display.height(), GxEPD_WHITE);
+        } while (display.nextPage());
+      }
 
-
-
-      // After full refresh, optionally draw a 100x100 overlay (picture-in-picture)
-      // from the center of the original xpwallpaper (400x300) at screen coords 50,50
-      if (display.epd2.hasFastPartialUpdate) {
+      //if (display.epd2.hasFastPartialUpdate) {    //  this display has this
+      if (strncmp(buff, "part", 4) == 0) {    //  show picture in picture (center 100x100 of currently loaded showBuff)
         const int srcW = 400;
         const int srcH = 300;
         const int ovW = 100;
@@ -103,10 +127,10 @@ void showTas(void *parameter) {    //  this handles servo movement
         const int destX = 50;  // user requested coordinates
         const int destY = 50;
 
-        display.setPartialWindow(50, 50, 100, 100);    //  numbers are xpos ypos width height
+        display.setPartialWindow(destX, destY, ovW, ovH);    //  numbers are xpos ypos width height
         display.firstPage();
         do {
-          // draw pixels copied bitwise from PROGMEM epd_bitmap_xpwallp
+      // draw pixels copied bitwise from showBuff (1bpp linear, 400x300 -> 15000 bytes)
           for (int y = 0; y < ovH; y++) {
             int srcY = srcY0 + y;
             for (int x = 0; x < ovW; x++) {
@@ -114,9 +138,9 @@ void showTas(void *parameter) {    //  this handles servo movement
               int bitIndex = srcY * srcW + srcX;              // 1bpp linear index
               int byteIndex = bitIndex / 8;
               uint8_t bitMask = 0x80 >> (bitIndex % 8);
-              uint8_t byteValue = pgm_read_byte(&epd_bitmap_xpwallp[byteIndex]);
+        uint8_t byteValue = showBuff[byteIndex];
               bool colored = byteValue & bitMask;             // bitmap as stored
-              display.drawPixel(destX + x, destY + y, colored ? GxEPD_BLACK : GxEPD_WHITE);
+              display.drawPixel(destX + x, destY + y, colored ? GxEPD_WHITE : GxEPD_BLACK);
             }
           }
         } while (display.nextPage());
@@ -125,9 +149,10 @@ void showTas(void *parameter) {    //  this handles servo movement
 
 
       display.hibernate();   //  hibernate display to save power
-
     }
-    vTaskDelay(1000);    //  no flicker just show every seconds
+    vTaskDelay(1);    //  befor one second so no flicker just show every seconds now we have to check timer continously
+
+
   }
 }
 
@@ -179,10 +204,14 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
       xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
 
-      if ( !strcmp(buff, "sendv local"   ) ) prefs.putBytes( "localL", sendBuff, sizeof(sendBuff));    //  ignore sendps here so no overwrites for annyos and only save once for usual send
-      if ( !strcmp(buff, "sendv profile" ) ) prefs.putBytes( "localP", sendBuff, sizeof(sendBuff));    //  when recipient profile save to localP when local save to localL
+      if ( !strcmp(buff, "sendv local"   ) ) {
+         prefs.putBytes( "localL", volatileBuff, sizeof(volatileBuff));    //  when recipient local save to localL
+         xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);
+      }
+      //if ( !strcmp(buff, "sendv profile" ) ) prefs.putBytes( "localP", volatileBuff, sizeof(volatileBuff));    //  when recipient profile save to localP when local save to localL  ignore sendps here so no overwrites for annyos and only save once for usual send
 
-      if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      //if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      if ( strcmp(buff + 6, "local") ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
@@ -196,7 +225,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
         if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
-        if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, sendBuff, 15000);    //  with 'sendv' send current foto
+        if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileBuff, 15000);    //  with 'sendv' send current foto of volatile buffer
 
         chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
         chachapoly.clear();
@@ -254,7 +283,7 @@ void initmqtt(){    //  handle incoming mqtt
       
       free(currentProfile);
 
-      xQueueSend(showQueue, (String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile
+      if (!sendscreents) xQueueSend(showQueue, ("part" + String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile picture in picture only when not in sendscreen
       xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
     }
 
@@ -263,7 +292,7 @@ void initmqtt(){    //  handle incoming mqtt
       
       feedlog("second decryption successfull");
 
-      xQueueSend(showQueue, (String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto
+      if (!sendscreents) xQueueSend(showQueue, ("full" + String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto with full refresh to clear profile overlay
     }
     chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
 
@@ -460,7 +489,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
   server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "profile " + prefs.getString("peers", "local ") );    //  send current peers list
+    request->send(200, "text/plain", "profile slot1 slot2 slot3 slot4 slot5");    //  send slot list
   });
 
 
@@ -468,23 +497,25 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
-    static String targetPeer = "";    // static to persist across chunks
+    static String destination = "";    // static to persist across chunks
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
-      targetPeer = request->getParam("peer")->value();
-      feedlog("file is for " + targetPeer);
+      destination = request->getParam("peer")->value();
+      feedlog("file is for " + destination);
     }
-    if (len + index > sizeof(sendBuff)) {
+    if (len + index > sizeof(volatileBuff)) {
       feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
     }
     else if (len) {
       feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
-      memcpy(sendBuff + index, data, len);    //  copy data to volatile buffer
+      memcpy(volatileBuff + index, data, len);    //  copy data to volatile buffer
     }
-    if (final){
-      xQueueSend(sendmqttQueue, ("sendp " + targetPeer).c_str(), 0);    //  send personal profile to peer
-      xQueueSend(sendmqttQueue, ("sendv " + targetPeer).c_str(), 0);    //  send preped volatile buffer to peer
+    if (final){    //  just save the recieved buffer to nvs
+      prefs.putBytes( ((destination == "profile") ? "localP" : destination).c_str(), volatileBuff, sizeof(volatileBuff));    //  save profile to 'localP'
+
+      //xQueueSend(sendmqttQueue, ("sendp " + destination).c_str(), 0);    //  send personal profile to peer
+      //xQueueSend(sendmqttQueue, ("sendv " + destination).c_str(), 0);    //  send preped volatile buffer to peer
     }
   });
 
@@ -498,27 +529,37 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
-String currpeer = "local";    //  start locally
 //InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
 InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
 void initflanks() {
 
   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
-    String peerString = prefs.getString("peers", "local");
-    
-    if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) currpeer = "local";   //  account for trailing space here test for last peer and wrap
-    else currpeer = peerString.substring( peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
 
-    Serial.println("current peer is " + currpeer + " now queueing currpeer p and L");    //  print current peer to serial
+    if ( sendscreents) {    //  when already in sendscreen this preps next slot
+      prep = "slot" + String(prep.substring(4).toInt() + 1);    //  prep slot to be sent when sendscreen timout runs out
+      if (prep != "slot6" ) { xQueueSend(showQueue, ("part" + prep).c_str(), 0); return; }    //  show slot in overlay and return eraly aslong as max slot is not reached
+    }
 
-    xQueueSend(showQueue, (currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
-    xQueueSend(showQueue, (currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+    if (!sendscreents || prep == "slot6") {    //  when not in sendscreen or last slot is reached this preps the next peer and resets slot
+      String peerString = prefs.getString("peers", "local");
+      if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) prep = "local";   //  account for trailing space here test for last peer and wrap
+      else prep = peerString.substring( peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
+
+      xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  show overlay of currentpeer profile
+      if (prep == "slot6") prep = "slot0";
+    }
+
+    unsigned long m = millis(); sendscreents = m ? m : 1;    //  catch unicorn case where millis is zero since sendscreen state is tracked with nonzero value
+
+    //Serial.println("current peer is " + currpeer + " now queueing currpeer p and L");    //  print current peer to serial
+    //xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+    //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
 
   });
 
-  belowus.bind(Event_DoubleClick, [](){
-    xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  just annoy peer with profile
-  });
+  //belowus.bind(Event_DoubleClick, [](){
+  //  xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  just annoy peer with profile
+  //});
 }
 
 
@@ -540,7 +581,7 @@ void setup() {
 
 
   // TODO add a boot screen of some sort currently the showTas does not support this 
-  //memcpy_P(sendBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
+  //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
   //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 }
 
