@@ -27,7 +27,7 @@ vision - stop using derived/unique adresses fully annymise conversation
 
 vision - add clear names for peers perhaps A B system
 
-vision - redesign website eg grey terminal like text input and drag and drop images
+vision - portal add drag and drop images
 
 vision - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
 

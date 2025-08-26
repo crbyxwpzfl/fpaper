@@ -13,25 +13,36 @@
         p { margin: 0 0 1rem; }
         body { overscroll-behavior: none; height: 100%; width: 100%; margin: 0; padding: 0; font-family:  -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; }
         .text-center { text-align: center; }
-        .gray { color: #667189; }
+        .gray { color: #dedede; }
         .shadow { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, 0)) drop-shadow(0 2px 2px rgba(0, 0, 0, 0.075)); }
-        .w-full { font-family:  Menlo; font-size: 10px; width: 100%; }
+    .w-full { font-family:  Menlo, monospace; font-size: 10px; width: 100%; }
         .grid { display: grid; }
         .gap-2 { gap: 0.5rem; }
         .flex { display: flex; }
         .grow { font-family:  Menlo; font-size: 20px; flex-grow: 1; }
         .justify-items-end { justify-items: end; }
         .rounded { border-radius: 0.5rem; }
-        .section { box-sizing: border-box; background-color: #00000000; }
+        .section { box-sizing: border-box; background-color: #ffffff; }
         .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; }
-        .main .pannel { position: relative; border: #fff; border-style: solid; border-width: 0.5rem; border-radius: 1rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 40px; }
-        .pannel button { cursor: pointer; padding: 8px 10px 8px; font-size: 15px; outline-style: none; border: 0px; color: #ffffff; background-color: #0067f4; }
-        .pannel button:disabled { background-color: #5a6169; }
-        .pannel #record { min-height: 3rem; padding: 0.5rem; resize: vertical; overscroll-behavior: none; }
+        .main .pannel { position: relative; border: #6a6a6a; border-style: solid; border-width: 0.1rem; border-radius: 0.5rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 40px; }
+        .pannel button { cursor: pointer; padding: 8px 10px 8px; font-size: 15px; outline-style: none; border: 0px; color: #000000; background-color: #0067f4; }
+        .pannel button:disabled { background-color: #f0f0f0; }
+    .pannel #record { height:20rem; max-height:20rem; padding: 0.5rem; resize: none; overscroll-behavior: none; background:#ffffff; color:#000000; font-family: Menlo, monospace; font-size:11px; line-height:1.3; overflow-y:auto; white-space:pre-wrap; text-align:left; }
+    .pannel #record .terminal-output-line, .pannel #record .prompt-line { text-align:left; }
+    .terminal-output-line { white-space: pre-wrap; word-break: break-word; }
+    .prompt-line { display:block; }
+    /* Serial output lines remain default (black via container); explicitly set for clarity */
+    .terminal-output-line { color:#767676; }
+    /* Prompt symbol color */
+    .prompt { color:#000000; }
+    /* User input (current and historical commands) color */
+    .prompt-input { outline:none; display:inline-block; min-width:1ch; color:#000000; caret-color:#000000; }
+    .prompt-input:empty:before { content:"\00a0"; }
+    #record:focus { outline:none; }
         #control-button { position: absolute; top: 0.5rem; right: 0.5rem; }
-        #control-button button { background-color: #5a6169; }
-        .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: black; }
-        .footer { padding: 1rem 0.5rem; background-color: white; }
+        #control-button button { background-color: #e3e3e3; }    /* top right corner buttons */
+        .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: rgb(212, 32, 32); }
+        .footer { padding: 1rem 0.5rem; background-color: rgb(255, 255, 255); }
         .copyright { padding-bottom: 1rem; }
         .float-left { float: left; }
         .float-right { float: right; }
@@ -146,22 +157,21 @@
         </a> -->
         <div class="pannel shadow grid gap-2">
             <div id="control-button">
-                <button class="rounded shadow" onclick="terminalClean()">
+                <button class="rounded shadow" onclick="terminalClean()" title="Clear terminal">
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="delete" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 256H736v-80c0-35.3-28.7-64-64-64H352c-35.3 0-64 28.7-64 64v80H160c-17.7 0-32 14.3-32 32v32c0 4.4 3.6 8 8 8h60.4l24.7 523c1.6 34.1 29.8 61 63.9 61h454c34.2 0 62.3-26.8 63.9-61l24.7-523H888c4.4 0 8-3.6 8-8v-32c0-17.7-14.3-32-32-32zm-200 0H360v-72h304v72z"></path></svg>
                 </button>
-                <button class="rounded shadow" onclick="enableFlowLock=!enableFlowLock">
+                <button class="rounded shadow" id="img-button" title="Choose image">
+                    <svg viewBox="64 64 896 896" focusable="false" data-icon="picture" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 160H160c-17.7 0-32 14.3-32 32v640c0 17.7 14.3 32 32 32h704c17.7 0 32-14.3 32-32V192c0-17.7-14.3-32-32-32zm-40 632H200V232h624v560z"/><path d="M300 480l134 160 96-112 130 160H300zM444 380a60 60 0 10120 0 60 60 0 10-120 0z"/></svg>
+                </button>
+                <button class="rounded shadow" onclick="enableFlowLock=!enableFlowLock" title="Toggle auto-scroll">
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="lock" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M832 464h-68V240c0-70.7-57.3-128-128-128H388c-70.7 0-128 57.3-128 128v224h-68c-17.7 0-32 14.3-32 32v384c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V496c0-17.7-14.3-32-32-32zM332 240c0-30.9 25.1-56 56-56h248c30.9 0 56 25.1 56 56v224H332V240zm460 600H232V536h560v304zM484 701v53c0 4.4 3.6 8 8 8h40c4.4 0 8-3.6 8-8v-53a48.01 48.01 0 10-56 0z"></path></svg>
                 </button>
-                <button class="rounded shadow" onclick="enableTimestamp=!enableTimestamp">
+                <button class="rounded shadow" onclick="enableTimestamp=!enableTimestamp" title="Toggle timestamps">
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
                 </button>
             </div>
-            <textarea class="w-full rounded" title="record" id="record" cols="50" rows="50" disabled></textarea>
-            <div class="flex w-full grid gap-2" id="terminal">
-                <input type="text" name="cmd" id="command-text" class="grow rounded" /><button class="grid justify-items-end rounded shadow" id="command-button">SEND</button>
-                <button class="grid justify-items-end rounded shadow" id="img-button">CHOOSE FILE</button>
-                <input type="file" id="imgInput" accept="image/*" style="display:none;" />
-            </div>
+            <div id="record" class="w-full rounded" tabindex="0" aria-label="terminal" role="textbox"></div>
+            <input type="file" id="imgInput" accept="image/*" style="display:none;" />
         </div>
         <h1 />
     </div>
@@ -190,17 +200,17 @@
     let connectTimeout;
     let commandHistory = [];
     let commandHistoryIdx = 0;
+    let promptContainer = null;
+    let inputSpan = null;
+    const PROMPT_SYMBOL = '> ';
     function removeLogo() {
         document.getElementById("logo").remove();
         document.getElementById("title").style.display = "block";
     }
     function initWebPage() {
-        document.getElementById("command-button").disabled = true;
-        document.getElementById("command-text").disabled = true;
         initCommandHistory();
         initWebSocket();
-        initButton();
-        trapKeyPress();
+        initTerminalUI();
         // Image button
         document.getElementById('img-button').addEventListener('click', function() {
             document.getElementById('imgInput').click();
@@ -231,39 +241,91 @@
         websocket.onmessage = onMessage;
         websocket.onerror = onError;
     }
-    function initButton() {
-        document.getElementById("command-button").addEventListener("click", sendCommand);
+    function initTerminalUI(){
+        textArea.setAttribute('contenteditable','false');
+        createPrompt();
+        textArea.addEventListener('keydown', terminalKeyHandler);
+        textArea.addEventListener('click', ensureCaretAtInputEnd);
     }
-    function trapKeyPress() {
-        document.getElementById("command-text").addEventListener("keypress", (event) => {
-            if (event.code === "Enter") {
-                event.preventDefault();
-                document.getElementById("command-button").click();
+    function createPrompt(){
+        promptContainer = document.createElement('div');
+        promptContainer.className = 'prompt-line';
+        const promptSpan = document.createElement('span');
+        promptSpan.className = 'prompt';
+        promptSpan.textContent = PROMPT_SYMBOL;
+        inputSpan = document.createElement('span');
+        inputSpan.className = 'prompt-input';
+        inputSpan.setAttribute('contenteditable','true');
+        promptContainer.appendChild(promptSpan);
+        promptContainer.appendChild(inputSpan);
+        textArea.appendChild(promptContainer);
+        focusInputEnd();
+        scrollTerminalBottom();
+    }
+    function focusInputEnd(){
+        if(!inputSpan) return;
+        const range = document.createRange();
+        range.selectNodeContents(inputSpan);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+    function ensureCaretAtInputEnd(){
+        if(!inputSpan) return;
+        if(!promptContainer.contains(document.activeElement)){
+            focusInputEnd();
+        }
+    }
+    function terminalKeyHandler(e){
+        if(!inputSpan) return;
+        const key = e.key;
+        if(key === 'Enter'){
+            e.preventDefault();
+            const cmd = inputSpan.textContent.trim();
+            executeCommand(cmd);
+            return;
+        }
+        if(key === 'ArrowUp'){
+            e.preventDefault();
+            if(commandHistory.length){
+                commandHistoryIdx = (commandHistoryIdx - 1 + commandHistory.length) % commandHistory.length;
+                inputSpan.textContent = commandHistory[commandHistoryIdx];
+                focusInputEnd();
             }
-        });
-        document.addEventListener("keydown", (event) => {
-            if (document.activeElement && document.activeElement.id === 'command-text') {
-                if (event.code === "ArrowUp") {
-                    commandHistoryIdx--;
-                    if (commandHistoryIdx < 0)
-                        commandHistoryIdx = commandHistory.length > 0 ? commandHistory.length - 1 : 0;
-                    if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
-                        document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
-                } else if (event.code === "ArrowDown") {
-                    commandHistoryIdx++;
-                    if (commandHistoryIdx >= commandHistory.length)
-                        commandHistoryIdx = 0;
-                    if (commandHistoryIdx >= 0 && commandHistoryIdx < commandHistory.length)
-                        document.getElementById("command-text").value = commandHistory[commandHistoryIdx];
-                }
+        } else if(key === 'ArrowDown'){
+            e.preventDefault();
+            if(commandHistory.length){
+                commandHistoryIdx = (commandHistoryIdx + 1) % commandHistory.length;
+                inputSpan.textContent = commandHistory[commandHistoryIdx];
+                focusInputEnd();
             }
-        });
+        }
+    }
+    function executeCommand(cmd){
+        if(cmd.length){
+            console.log('send command: ', cmd);
+            websocket && websocket.readyState === WebSocket.OPEN && websocket.send(cmd);
+            commandHistory.push(cmd);
+            if (commandHistory.length > 50) {
+                commandHistory.splice(0, commandHistory.length - 50);
+            }
+            commandHistoryIdx = commandHistory.length;
+            localStorage.history = JSON.stringify(commandHistory);
+        }
+        inputSpan.setAttribute('contenteditable','false');
+        inputSpan = null;
+        createPrompt();
+    }
+    function scrollTerminalBottom(){
+        if(!enableFlowLock){
+            textArea.scrollTop = textArea.scrollHeight;
+        }
     }
     function onOpen(event) {
         clearTimeout(connectTimeout);
         terminalWrite("found portal try 'help' for configuration");
-        document.getElementById("command-button").disabled = false;
-        document.getElementById("command-text").disabled = false;
+        focusInputEnd();
     }
     function onError(e) {
         console.log("Error!", e);
@@ -281,31 +343,27 @@
         }
     }
     function terminalWrite(raw) {
-        if (enableTimestamp) {
-            let now = new Date();
-            raw = "[" + now.toLocaleTimeString() + "] " + raw + "\n";
-        }
-        textArea.value += raw + "\n";
-        if (!enableFlowLock) {
-            textArea.scrollTop = textArea.scrollHeight;
-        }
+        if(Array.isArray(raw)) raw = raw.join('\n');
+        if(raw.endsWith('\n')) raw = raw.slice(0,-1);
+        const lines = raw.split(/\n/);
+        lines.forEach(line => {
+            const div = document.createElement('div');
+            div.className = 'terminal-output-line';
+            if(enableTimestamp && line.trim().length){
+                div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + line;
+            } else {
+                div.textContent = line;
+            }
+            if(promptContainer) textArea.insertBefore(div, promptContainer); else textArea.appendChild(div);
+        });
+        scrollTerminalBottom();
     }
     function terminalClean() {
-        textArea.value = "";
-        textArea.scrollTop = textArea.scrollHeight;
+        textArea.innerHTML = '';
+        promptContainer = null; inputSpan = null;
+        createPrompt();
     }
-    function sendCommand() {
-        let cmd = document.getElementById("command-text").value;
-        console.log('send command: ', cmd);
-        websocket.send(cmd);
-        commandHistory.push(cmd);
-        if (commandHistory.length > 20) {
-            commandHistory.splice(0, commandHistory.length - 20);
-        }
-        commandHistoryIdx = commandHistory.length;
-        document.getElementById("command-text").value = "";
-        localStorage.history = JSON.stringify(commandHistory);
-    }
+    // sendCommand replaced by inline prompt handler
     setInterval(() => {
         if (!pingTimeout && websocket.readyState == WebSocket.OPEN) {
             pingTimeout = setTimeout(() => {
