@@ -89,6 +89,51 @@ void showTas(void *parameter) {    //  this handles servo movement
         display.drawBitmap(0, 0, showBuff, display.width(), display.height(), GxEPD_WHITE);
       } while (display.nextPage());
 
+
+
+      // After full refresh, optionally draw a 100x100 overlay (picture-in-picture)
+      // from the center of the original xpwallpaper (400x300) at screen coords 50,50
+      if (display.epd2.hasFastPartialUpdate) {
+        const int srcW = 400;
+        const int srcH = 300;
+        const int ovW = 100;
+        const int ovH = 100;
+        const int srcX0 = (srcW - ovW) / 2;  // 150
+        const int srcY0 = (srcH - ovH) / 2;  // 100
+        const int destX = 50;  // user requested coordinates
+        const int destY = 50;
+        const int radius = 12; // rounded corner radius in pixels
+
+        display.setPartialWindow(destX, destY, ovW, ovH);
+        display.firstPage();
+        do {
+          // draw pixels copied bitwise from PROGMEM epd_bitmap_xpwallp
+          for (int y = 0; y < ovH; y++) {
+            int srcY = srcY0 + y;
+            for (int x = 0; x < ovW; x++) {
+              // Rounded corner mask: skip pixels outside quarter circles
+              bool skip = false;
+              int dx, dy;
+              if (x < radius && y < radius) { dx = radius - 1 - x; dy = radius - 1 - y; skip = (dx*dx + dy*dy) > radius*radius; }
+              else if (x >= ovW - radius && y < radius) { dx = x - (ovW - radius); dy = radius - 1 - y; skip = (dx*dx + dy*dy) > radius*radius; }
+              else if (x < radius && y >= ovH - radius) { dx = radius - 1 - x; dy = y - (ovH - radius); skip = (dx*dx + dy*dy) > radius*radius; }
+              else if (x >= ovW - radius && y >= ovH - radius) { dx = x - (ovW - radius); dy = y - (ovH - radius); skip = (dx*dx + dy*dy) > radius*radius; }
+              if (skip) continue; // leave background (previous full frame) creating rounded corner
+
+              int srcX = srcX0 + x;
+              int bitIndex = srcY * srcW + srcX;              // 1bpp linear index
+              int byteIndex = bitIndex / 8;
+              uint8_t bitMask = 0x80 >> (bitIndex % 8);
+              uint8_t byteValue = pgm_read_byte(&epd_bitmap_xpwallp[byteIndex]);
+              bool colored = byteValue & bitMask;             // bitmap as stored
+              display.drawPixel(destX + x, destY + y, colored ? GxEPD_BLACK : GxEPD_WHITE);
+            }
+          }
+        } while (display.nextPage());
+      }
+
+
+
       display.hibernate();   //  hibernate display to save power
 
     }
