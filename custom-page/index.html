@@ -32,7 +32,7 @@
     .section { box-sizing: border-box; background-color: #ffffff; }
     .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; padding: 0 var(--terminal-side-gap); }
     .main .pannel { position: relative; border: #ffffff; border-style: solid; border-width: 0.1rem; border-radius: 0.5rem; background-color: #fff; width: 100%; max-width: var(--terminal-max-width); font-size: 10px; margin: 40px auto 0; }
-        .pannel button { cursor: pointer; padding: 8px 5px 0px; font-size: 20px; outline-style: none; border: 0px; color: #000000; background-color: #0067f4; }
+    .pannel button { cursor: pointer; padding: 7px 5px 0px; font-size: 16px; outline-style: none; border: 0px; color: #000000; background-color: rgba(0,103,244,0.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
         .pannel button:disabled { background-color: #f0f0f0; }
     .pannel #record { height:40rem; max-height:40rem; padding: 0.5rem; resize: none; overscroll-behavior: none; background:#ffffff; color:#000000; font-family: Menlo, monospace; font-size:11px; line-height:1.4; overflow-y:auto; white-space:pre-wrap; text-align:left; width:100%; box-sizing:border-box; }
     .pannel #record .terminal-output-line, .pannel #record .prompt-line { text-align:left; }
@@ -47,7 +47,7 @@
     .prompt-input:empty:before { content:"\00a0"; }
     #record:focus { outline:none; }
         #control-button { position: absolute; top: 0.5rem; right: 0.5rem; }
-        #control-button button { background-color: #ffffff00; }    /* top right corner buttons */
+    #control-button button { background-color: rgba(255,255,255,0.15); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }    /* top right corner buttons */
         .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: rgb(212, 32, 32); }
         .footer { padding: 1rem 0.5rem; background-color: rgb(255, 255, 255); }
         .copyright { padding-bottom: 1rem; }
@@ -73,6 +73,8 @@
             /*max-width: 90vw;
             height: 90vh;
             object-fit: contain;*/
+            width: 70vw;
+            maxHeight: 70vh;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -89,6 +91,8 @@
             width: auto;
             height: auto;
             object-fit: contain*/
+            width: 70vw;
+            maxHeight: 70vh;
             border-radius: 1.5rem;
             background: #fff;
         }
@@ -111,37 +115,33 @@
         #peerButtonsContainer {
             position: absolute;
             z-index: 10;
-            /* Remove right/bottom, use JS for pixel positioning */
             display: none;
-            flex-direction: column;
-            gap: 0.25rem;
-            /* Fixed size, do not scale with overlay */
+            flex-direction: row;
+            gap: 0.35rem;
             width: auto;
             height: auto;
             min-width: 1px;
             min-height: 1px;
-            /* Prevent scaling */
-            transform: none !important;
+            transform: none;
+            pointer-events: auto;
         }
         
         .peer-btn {
-            background: #0067f4;
-            color: #fff;
+            background: rgba(255, 255, 255, 0.52);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            color: #000000;
             border: none;
-            border-radius: 0.7rem;
-            padding: 0.5rem 0.5rem;
-            font-size: 1rem;
+            border-radius: 0.55rem;
+            padding: 0.45rem 0.7rem;
+            font-size: 0.85rem;
+            line-height: 1;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             cursor: pointer;
             white-space: nowrap;
-            min-width: 60px;
-            /* Fixed size, do not scale with overlay */
             width: auto;
             height: auto;
-            min-width: 1px;
-            min-height: 1px;
-            /* Prevent scaling */
-            transform: none !important;
+            transform: none;
         }
         
         .peer-btn:hover {
@@ -187,7 +187,7 @@
                     <svg viewBox="0 2 23 23" focusable="false" data-icon="lock" width="1em" height="1em" fill="currentColor" aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12L12 16M12 16L16 12M12 16V4M4 20H20"/></svg>
                 </button>
                 <button class="rounded shadow" onclick="enableTimestamp=!enableTimestamp" title="Toggle timestamps">
-                    <svg viewBox="34 34 998 998" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
+                    <svg viewBox="1 1 998 998" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
                 </button>
             </div>
             <div id="record" class="w-full rounded" tabindex="0" aria-label="terminal" role="textbox"></div>
@@ -200,7 +200,7 @@
         <div id="imgOverlay">
             <div id="imgRegionContainer">
                 <img id="popupImage" src="#" alt="your image" style="display:none;" />
-                <canvas id="ditheredOverlay" width="300" height="400" style="display:none;"></canvas>
+                <canvas id="ditheredOverlay" width="400" height="300" style="display:none;"></canvas>
                 <div id="region" style="display:none;"></div>
                 <div id="peerButtonsContainer">
                     <!-- Peer buttons will be added dynamically here -->
@@ -658,12 +658,16 @@
             button.addEventListener('click', () => sendToPeer(peer));
             peerButtonsContainer.appendChild(button);
         });
+        // Position immediately if region visible and image loaded
+        if (region.style.display === 'block' && popupImage.complete) {
+            requestAnimationFrame(() => updateRegion());
+        }
     }
     
     // Function to send image data to a specific peer
     function sendToPeer(peer) {
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = 300; tempCanvas.height = 400;
+        tempCanvas.width = 400; tempCanvas.height = 300;
         const tempCtx = tempCanvas.getContext('2d');
         const scaleX = popupImage.naturalWidth / popupImage.width;
         const scaleY = popupImage.naturalHeight / popupImage.height;
@@ -673,9 +677,9 @@
         const sh = regionData.height * scaleY;
         tempCtx.save();
         tempCtx.translate(150, 200);
-        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 300, 400);
+        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 400, 300);
         tempCtx.restore();
-        dithering(tempCtx, 300, 400, 128, 3);
+        dithering(tempCtx, 400, 300, 128, 3);
         const bytes = canvas2bytes(tempCanvas, 'bw');
         const byteArray = new Uint8Array(bytes);
         const blob = new Blob([byteArray], {type: 'application/octet-stream'});
@@ -713,6 +717,7 @@
                 // scale image by orientation to avoid stretching
                 // also just max-heigth and max-width does not work since small images wont get scaled up to their max height/width
                 // object-fit: contain does not work since the ditthering then for some reason uses a stretched version of the image.
+                /*
                 popupImage.style.removeProperty('max-width');
                 popupImage.style.removeProperty('max-height');
                 popupImage.style.removeProperty('width');
@@ -722,21 +727,22 @@
                 imgOverlay.style.removeProperty('height');
                 imgOverlay.style.removeProperty('max-height');
                 if (popupImage.naturalWidth >= popupImage.naturalHeight) {
-                    popupImage.style.width = '90vw';
-                    popupImage.style.maxHeight = '90vh';
-                    imgOverlay.style.width = '90vw';
-                    imgOverlay.style.maxHeight = '90vh';
+                    popupImage.style.width = '70vw';
+                    popupImage.style.maxHeight = '70vh';
+                    imgOverlay.style.width = '70vw';
+                    imgOverlay.style.maxHeight = '70vh';
                 }
                 if (popupImage.naturalWidth < popupImage.naturalHeight) {
-                    popupImage.style.maxWidth = '90vw';
-                    popupImage.style.height = '90vh';
-                    imgOverlay.style.maxWidth = '90vw';
-                    imgOverlay.style.height = '90vh';
+                    popupImage.style.maxWidth = '70vw';
+                    popupImage.style.height = '70vh';
+                    imgOverlay.style.maxWidth = '70vw';
+                    imgOverlay.style.height = '70vh';
                 }
+                */
                 imgRect = popupImage.getBoundingClientRect();
                 const iw = popupImage.width, ih = popupImage.height;
-                let rw = iw * 0.5, rh = rw * 4/3;
-                if (rh > ih) { rh = ih * 0.5; rw = rh * 3/4; }
+                let rw = iw * 0.5, rh = rw * 3/4;
+                if (rh > ih) { rh = ih * 0.5; rw = rh * 4/3; }
                 regionData = {
                     left: (iw - rw) / 2,
                     top: (ih - rh) / 2,
@@ -758,15 +764,30 @@
         region.style.height = regionData.height + 'px';
         ditheredOverlay.style.left = regionData.left + 'px';
         ditheredOverlay.style.top = regionData.top + 'px';
-        ditheredOverlay.width = 300;
-        ditheredOverlay.height = 400;
+        ditheredOverlay.width = 400;
+        ditheredOverlay.height = 300;
         ditheredOverlay.style.width = regionData.width + 'px';
         ditheredOverlay.style.height = regionData.height + 'px';
         ditheredOverlay.style.display = 'block';
-        // Position peer buttons container at bottom right of overlay region, fixed size
-        peerButtonsContainer.style.left = (regionData.left + regionData.width - 70) + 'px';
-        peerButtonsContainer.style.top = (regionData.top + regionData.height - (peers.length * 40) + 10) + 'px';
-        peerButtonsContainer.style.display = 'flex';
+    // Position peer buttons container at top-right of region; buttons flow leftward
+    peerButtonsContainer.style.display = 'flex';
+    // Temporarily render to measure width
+    peerButtonsContainer.style.visibility = 'hidden';
+    peerButtonsContainer.style.left = '-9999px';
+    peerButtonsContainer.style.top = '-9999px';
+    // Force reflow
+    void peerButtonsContainer.offsetWidth;
+    // Measure total width of buttons
+    let totalWidth = 0;
+    Array.from(peerButtonsContainer.children).forEach(btn => { totalWidth += btn.getBoundingClientRect().width; });
+    // Add gaps
+    const gap = 0.35 * 16; // 0.35rem in px (approx)
+    if(peerButtonsContainer.children.length > 1){ totalWidth += gap * (peerButtonsContainer.children.length - 1); }
+    // Anchor right edge to region's right edge
+    const leftPos = regionData.left + regionData.width - totalWidth;
+    peerButtonsContainer.style.left = leftPos + 27 + 'px';
+    peerButtonsContainer.style.top = regionData.top - 22 + 'px';
+    peerButtonsContainer.style.visibility = 'visible';
         if (popupImage.src && popupImage.complete && regionData.width > 0 && regionData.height > 0) {
             const scaleX = popupImage.naturalWidth / popupImage.width;
             const scaleY = popupImage.naturalHeight / popupImage.height;
@@ -775,13 +796,13 @@
             const sw = regionData.width * scaleX;
             const sh = regionData.height * scaleY;
             const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = 300; tempCanvas.height = 400;
+            tempCanvas.width = 400; tempCanvas.height = 300;
             const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(popupImage, sx, sy, sw, sh, 0, 0, 300, 400);
-            dithering(tempCtx, 300, 400, 128, 3);
+            tempCtx.drawImage(popupImage, sx, sy, sw, sh, 0, 0, 400, 300);
+            dithering(tempCtx, 400, 300, 128, 3);
             const overlayCtx = ditheredOverlay.getContext('2d');
-            overlayCtx.clearRect(0, 0, 300, 400);
-            overlayCtx.drawImage(tempCanvas, 0, 0, 300, 400);
+            overlayCtx.clearRect(0, 0, 400, 300);
+            overlayCtx.drawImage(tempCanvas, 0, 0, 400, 300);
         }
     }
     region.addEventListener('mousedown', function(e) {
@@ -812,11 +833,11 @@
         let scale = e.deltaY < 0 ? 1.05 : 0.95;
         if (e.ctrlKey) scale = e.deltaY < 0 ? 1.01 : 0.99;
         let newWidth = regionData.width * scale;
-        let newHeight = newWidth * 4/3;
+        let newHeight = newWidth * 3/4;
         // Clamp to image size
-        if (newWidth < 30 || newHeight < 40) return;
-        if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
-        if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
+        if (newWidth < 40 || newHeight < 30) return;
+        if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 3/4;
+        if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 4/3;
         // Calculate center before scaling
         let centerX = regionData.left + regionData.width / 2;
         let centerY = regionData.top + regionData.height / 2;
@@ -868,10 +889,10 @@
             );
             let scale = dist / lastTouchDist;
             let newWidth = startWidth * scale;
-            let newHeight = newWidth * 4/3;
-            if (newWidth < 30 || newHeight < 40) return;
-            if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 4/3;
-            if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 3/4;
+            let newHeight = newWidth * 3/4;
+            if (newWidth < 40 || newHeight < 30) return;
+            if (newWidth > popupImage.width) newWidth = popupImage.width, newHeight = newWidth * 3/4;
+            if (newHeight > popupImage.height) newHeight = popupImage.height, newWidth = newHeight * 4/3;
             let centerX = regionData.left + regionData.width / 2;
             let centerY = regionData.top + regionData.height / 2;
             let newLeft = centerX - newWidth / 2;
