@@ -145,7 +145,7 @@
         }
         
         .peer-btn:hover {
-            background: #0056d3;
+            background: #0000007f;
         }
 
         /* 
@@ -496,21 +496,26 @@
 
         const arr = [];
         let buffer = [];
-
-        for (let x = canvas.width - 1; x >= 0; x--) {
-            for (let y = 0; y < canvas.height; y++) {
+        // Scan in row-major order (left->right, top->bottom) so pixel i maps to bitIndex=i (y*width+x)
+        // This matches the ESP32 side which accesses bits with bitIndex = y*srcW + x and mask 0x80>>(bitIndex%8)
+        // Each group of 8 pushed bits forms one byte with the first bit as MSB (bit7) as expected by the decoder.
+        for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
                 const index = (canvas.width * 4 * y) + x * 4;
-                if (type !== 'bwr') {
-                    buffer.push(imageData.data[index] > 0 && imageData.data[index + 1] > 0 && imageData.data[index + 2] > 0 ? 1 : 0);
-                } else {
-                    buffer.push(imageData.data[index] > 0 && imageData.data[index + 1] === 0 && imageData.data[index + 2] === 0 ? 1 : 0);
-                }
-
+                const isOn = (type !== 'bwr')
+                    ? (imageData.data[index] > 0 && imageData.data[index + 1] > 0 && imageData.data[index + 2] > 0)
+                    : (imageData.data[index] > 0 && imageData.data[index + 1] === 0 && imageData.data[index + 2] === 0);
+                buffer.push(isOn ? 1 : 0);
                 if (buffer.length === 8) {
                     arr.push(parseInt(buffer.join(''), 2));
                     buffer = [];
                 }
             }
+        }
+        // Flush remaining bits if image width*height not multiple of 8 (shouldn't happen for 400x300 but keep for safety)
+        if (buffer.length) {
+            while (buffer.length < 8) buffer.push(0); // pad with 0 (black)
+            arr.push(parseInt(buffer.join(''), 2));
         }
         return arr;
     }
@@ -627,7 +632,7 @@
     const peerButtonsContainer = document.getElementById('peerButtonsContainer');
     let peers = ['local']; // Default peer list
     let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
-    let regionData = {left: 50, top: 50, width: 150, height: 200}; // default 3:4
+    let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
     let imgRect = null;
     let lastTouchDist = null;
     
@@ -676,8 +681,8 @@
         const sw = regionData.width * scaleX;
         const sh = regionData.height * scaleY;
         tempCtx.save();
-        tempCtx.translate(150, 200);
-        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -150, -200, 400, 300);
+        tempCtx.translate(200, 150); // 4:3
+        tempCtx.drawImage(popupImage, sx, sy, sw, sh, -200, -150, 400, 300);
         tempCtx.restore();
         dithering(tempCtx, 400, 300, 128, 3);
         const bytes = canvas2bytes(tempCanvas, 'bw');
