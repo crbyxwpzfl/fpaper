@@ -28,12 +28,13 @@
         .grow { font-family:  Menlo; font-size: 20px; flex-grow: 1; }
         .justify-items-end { justify-items: end; }
         .rounded { border-radius: 0.5rem; }
-        .section { box-sizing: border-box; background-color: #ffffff; }
-        .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; }
-        .main .pannel { position: relative; border: #ffffff; border-style: solid; border-width: 0.1rem; border-radius: 0.5rem; background-color: #fff; width: calc(100% - 1rem); font-size: 10px; margin-top: 40px; }
-        .pannel button { cursor: pointer; padding: 8px 10px 8px; font-size: 15px; outline-style: none; border: 0px; color: #000000; background-color: #0067f4; }
+    :root { --terminal-max-width: 960px; --terminal-side-gap: 1rem; }
+    .section { box-sizing: border-box; background-color: #ffffff; }
+    .main { display: flex; flex-direction: column; justify-content: flex-start; align-items: center; height: 70dvh; padding: 0 var(--terminal-side-gap); }
+    .main .pannel { position: relative; border: #ffffff; border-style: solid; border-width: 0.1rem; border-radius: 0.5rem; background-color: #fff; width: 100%; max-width: var(--terminal-max-width); font-size: 10px; margin: 40px auto 0; }
+        .pannel button { cursor: pointer; padding: 8px 5px 0px; font-size: 25px; outline-style: none; border: 0px; color: #000000; background-color: #0067f4; }
         .pannel button:disabled { background-color: #f0f0f0; }
-    .pannel #record { height:20rem; max-height:20rem; padding: 0.5rem; resize: none; overscroll-behavior: none; background:#ffffff; color:#000000; font-family: Menlo, monospace; font-size:11px; line-height:1.4; overflow-y:auto; white-space:pre-wrap; text-align:left; }
+    .pannel #record { height:40rem; max-height:40rem; padding: 0.5rem; resize: none; overscroll-behavior: none; background:#ffffff; color:#000000; font-family: Menlo, monospace; font-size:11px; line-height:1.4; overflow-y:auto; white-space:pre-wrap; text-align:left; width:100%; box-sizing:border-box; }
     .pannel #record .terminal-output-line, .pannel #record .prompt-line { text-align:left; }
     .terminal-output-line { white-space: pre-wrap; word-break: break-word; }
     .prompt-line { display:block; }
@@ -46,7 +47,7 @@
     .prompt-input:empty:before { content:"\00a0"; }
     #record:focus { outline:none; }
         #control-button { position: absolute; top: 0.5rem; right: 0.5rem; }
-        #control-button button { background-color: #c5c5c5; }    /* top right corner buttons */
+        #control-button button { background-color: #ffffff00; }    /* top right corner buttons */
         .alert span { user-select: none; background: #ffe14d; padding: 1px 10px; display: block; color: rgb(212, 32, 32); }
         .footer { padding: 1rem 0.5rem; background-color: rgb(255, 255, 255); }
         .copyright { padding-bottom: 1rem; }
@@ -164,16 +165,26 @@
         <div class="pannel shadow grid gap-2">
             <div id="control-button">
                 <button class="rounded shadow" onclick="terminalClean()" title="Clear terminal">
+                    <!---
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="delete" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 256H736v-80c0-35.3-28.7-64-64-64H352c-35.3 0-64 28.7-64 64v80H160c-17.7 0-32 14.3-32 32v32c0 4.4 3.6 8 8 8h60.4l24.7 523c1.6 34.1 29.8 61 63.9 61h454c34.2 0 62.3-26.8 63.9-61l24.7-523H888c4.4 0 8-3.6 8-8v-32c0-17.7-14.3-32-32-32zm-200 0H360v-72h304v72z"></path></svg>
+                    --->
+                    <svg viewBox="2 2 20 20" focusable="false" data-icon="delete" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M16.19 2H7.81C4.17 2 2 4.17 2 7.81V16.18C2 19.83 4.17 22 7.81 22H16.18C19.82 22 21.99 19.83 21.99 16.19V7.81C22 4.17 19.83 2 16.19 2ZM12.52 15.75L11.26 17.01C10.62 17.66 9.57 17.66 8.92 17.01L6.99 15.08C6.34 14.43 6.35 13.39 6.99 12.74L8.26 11.48C8.46 11.29 8.77 11.29 8.97 11.48L12.53 15.04C12.72 15.24 12.72 15.56 12.52 15.75ZM17.01 11.26L13.93 14.34C13.73 14.54 13.42 14.54 13.22 14.34L9.66 10.78C9.46 10.58 9.46 10.27 9.66 10.07L12.74 6.99C13.38 6.34 14.43 6.34 15.08 6.99L17.01 8.92C17.66 9.57 17.66 10.62 17.01 11.26Z" /></svg>
+                    
                 </button>
                 <button class="rounded shadow" id="img-button" title="Choose image">
-                    <svg viewBox="64 64 896 896" focusable="false" data-icon="picture" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 160H160c-17.7 0-32 14.3-32 32v640c0 17.7 14.3 32 32 32h704c17.7 0 32-14.3 32-32V192c0-17.7-14.3-32-32-32zm-40 632H200V232h624v560z"/><path d="M300 480l134 160 96-112 130 160H300zM444 380a60 60 0 10120 0 60 60 0 10-120 0z"/></svg>
+                    <!--
+                        <svg viewBox="64 64 896 896" focusable="false" data-icon="picture" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M864 160H160c-17.7 0-32 14.3-32 32v640c0 17.7 14.3 32 32 32h704c17.7 0 32-14.3 32-32V192c0-17.7-14.3-32-32-32zm-40 632H200V232h624v560z"/><path d="M300 480l134 160 96-112 130 160H300zM444 380a60 60 0 10120 0 60 60 0 10-120 0z"/></svg>
+                        -->
+                     <svg viewBox="1 2 25 25" focusable="false" data-icon="picture" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M10 1C9.73478 1 9.48043 1.10536 9.29289 1.29289L3.29289 7.29289C3.10536 7.48043 3 7.73478 3 8V20C3 21.6569 4.34315 23 6 23H14C14.5523 23 15 22.5523 15 22C15 21.4477 14.5523 21 14 21H6C5.44772 21 5 20.5523 5 20V9H10C10.5523 9 11 8.55228 11 8V3H18C18.5523 3 19 3.44772 19 4V8C19 8.55228 19.4477 9 20 9C20.5523 9 21 8.55228 21 8V4C21 2.34315 19.6569 1 18 1H10ZM9 7H6.41421L9 4.41421V7ZM20 12C20 11.4477 19.5523 11 19 11C18.4477 11 18 11.4477 18 12V15H15C14.4477 15 14 15.4477 14 16C14 16.5523 14.4477 17 15 17H18V20C18 20.5523 18.4477 21 19 21C19.5523 21 20 20.5523 20 20V17H23C23.5523 17 24 16.5523 24 16C24 15.4477 23.5523 15 23 15H20V12Z" fill="#000000"/></svg>
                 </button>
                 <button class="rounded shadow" onclick="enableFlowLock=!enableFlowLock" title="Toggle auto-scroll">
+                    <!---
                     <svg viewBox="64 64 896 896" focusable="false" data-icon="lock" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M832 464h-68V240c0-70.7-57.3-128-128-128H388c-70.7 0-128 57.3-128 128v224h-68c-17.7 0-32 14.3-32 32v384c0 17.7 14.3 32 32 32h640c17.7 0 32-14.3 32-32V496c0-17.7-14.3-32-32-32zM332 240c0-30.9 25.1-56 56-56h248c30.9 0 56 25.1 56 56v224H332V240zm460 600H232V536h560v304zM484 701v53c0 4.4 3.6 8 8 8h40c4.4 0 8-3.6 8-8v-53a48.01 48.01 0 10-56 0z"></path></svg>
+                    --->
+                    <svg viewBox="1 2 23 23" focusable="false" data-icon="lock" width="1em" height="1em" fill="currentColor" aria-hidden="true" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12L12 16M12 16L16 12M12 16V4M4 20H20"/></svg>
                 </button>
                 <button class="rounded shadow" onclick="enableTimestamp=!enableTimestamp" title="Toggle timestamps">
-                    <svg viewBox="64 64 896 896" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
+                    <svg viewBox="34 34 998 998" focusable="false" data-icon="clock-circle" width="1em" height="1em" fill="currentColor" aria-hidden="true" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"></path><path d="M686.7 638.6L544.1 535.5V288c0-4.4-3.6-8-8-8H488c-4.4 0-8 3.6-8 8v275.4c0 2.6 1.2 5 3.3 6.5l165.4 120.6c3.6 2.6 8.6 1.8 11.2-1.7l28.6-39c2.6-3.7 1.8-8.7-1.8-11.2z"></path></svg>
                 </button>
             </div>
             <div id="record" class="w-full rounded" tabindex="0" aria-label="terminal" role="textbox"></div>
