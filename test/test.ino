@@ -70,9 +70,9 @@ TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
 void showTas(void *parameter) {    //  this handles servo movement
-  showQueue = xQueueCreate(5, 20);    // create queue with buffer of 5 with length of nvsalias so 20 chars
+  struct showstct { uint8_t sendscreen = 0; uint8_t partial = 0; char nvsalias[15] = ""; }; showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5 with length of nvsalias so 20 chars
 
-  char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
+  //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
@@ -81,33 +81,13 @@ void showTas(void *parameter) {    //  this handles servo movement
   uint8_t showBuff[15000];
 
   while(true){
-
-    if (sendscreents && (millis() - sendscreents) >= 5000) {    //  wait for 2 seconds hopefully this is wrap save
-
-      if (prep.indexOf("slot") == 0) {    //  when slot in prep then send slot to current peer
-        if (!prefs.getBytes(prep.c_str(), showBuff, 15000 ))  Serial.println("timer up found garbage for " + prep) ;    //  for invalid nvs lookups this returns null and leaves showBuff
-
-        memcpy(volatileBuff, showBuff, 15000);    //  copy showBuff to volatileBuff prepare buffer for send
-
-        xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  send profile to currpeer
-        xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0);    //  send prepared buffer to currpeer
-      }
-
-      else {    //  everything else is just a peer change so make prep the currpeer and display currpeer
-        prep = currpeer;
-        xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer    for now first show profile of next peer then do a full refresh with 'L'atest foto of next peer to also clear the partial overlay
-        xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
-      }
-
-      sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen
-    }
-  
     if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
-      xQueueReceive(showQueue, &buff, 0);
+      showstct show; xQueueReceive(showQueue, &show, 0);
 
-      if (!prefs.getBytes( String(buff).substring(4, 15).c_str(), showBuff, 15000 ))  Serial.println("nothing found for " + String(buff).substring(4, 15)) ;    //  for invalid nvs lookups this returns null and leaves showBuff
+      if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this returns null and leaves showBuff
 
-      if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
+      //if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
+      if (!show.partial) {    //  show with full refresh
         display.setFullWindow();
         display.firstPage();
         do {
@@ -117,7 +97,8 @@ void showTas(void *parameter) {    //  this handles servo movement
       }
 
       //if (display.epd2.hasFastPartialUpdate) {    //  this display has this
-      if (strncmp(buff, "part", 4) == 0) {    //  show picture in picture (center 100x100 of currently loaded showBuff)
+      //if (strncmp(buff, "part", 4) == 0) {    //  show picture in picture (center 100x100 of currently loaded showBuff)
+      if ( show.partial) {    //  show picture in picture (center 100x100 of currently loaded showBuff)
         const int srcW = 400;
         const int srcH = 300;
         const int ovW = 230;
@@ -309,7 +290,7 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
   dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
   while(true){
     dnsServer.processNextRequest();
-    feedlog("hold led blue while in ap mode", "debug");
+    feedlog("dns for ap mode", "debug");
     vTaskDelay(10);
   }
 }
@@ -486,9 +467,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
   }
 
-  
-  WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });
-  //WebSerial.onMessage([](const String& msg) { recv(msg); });    //  attach message callback
+  WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });    //  attach message callback
+
   WebSerial.begin(&server);    //  init webserial
 
 
@@ -534,9 +514,78 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
 //InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
-InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
+//InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
+InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+//InterruptButton::m_RTOSservicerStackDepth = 4096; // Use larger values for more memory intensive functions if using Asynchronous mode.
 void initflanks() {
 
+  belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
+    if ( sendscreents) {    //  when already in sendscreen this preps next slot
+
+      //   ------- TODO --------- 
+      //   restructure async queses to use structs and TRY TO REMOVE STRINGS where possible eg prep should be char[] or string (not String) i think
+      //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
+      //   package falnk into its own task perhaps this is not a good idea but it seems more consice with the rest of this and likely the lib does the same thing i think perhaps chekc this and perhaps use hybrid mode instead of syncronous wit own rtos task
+
+      prep = "slot" + String(prep.substring(4).toInt() + 1);    //  prep slot to be sent when sendscreen timout runs out
+      if (prep != "slot6" ) {
+
+        //struct showstct { uint8_t sendscreen = 0; uint8_t partial = 0; char nvsalias[15] = ""; };
+        //xQueueSend(showQueue, &(showstct){1, 1, prep}, 0);
+
+        xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){1, 1, prep}, 0);
+        
+        //xQueueSend(showQueue, ("part" + prep).c_str(), 0); 
+        return; }    //  show slot in overlay and return eraly aslong as max slot is not reached
+    }
+
+    if (!sendscreents || prep == "slot6") {    //  when not in sendscreen or last slot is reached this preps the next peer and resets slot
+      String peerString = prefs.getString("peers", "local");
+      if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) prep = "local";   //  account for trailing space here test for last peer and wrap
+      else prep = peerString.substring( peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
+
+
+      xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){1, 1, currpeer + "P"}, 0);
+      //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  show overlay of currentpeer profile
+      if (prep == "slot6") prep = "slot0";
+    }
+
+    sendscreents = 1;  //  TODO make this a local var in showtas
+  });
+
+
+
+  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
+
+
+
+  // TODO test if this resets for multible key presses or if this fires multible times
+  belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
+    Serial.println("timeout reached will do stuff now");
+
+      if (prep.indexOf("slot") == 0) {    //  when slot in prep then send slot to current peer
+        if (!prefs.getBytes(prep.c_str(), volatileBuff, 15000 )) { Serial.println("timer up found garbage for " + prep); esp_fill_random(volatileBuff, sizeof(volatileBuff)); }    //  for invalid nvs lookups this returns null and leaves showBuff
+
+        xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  send profile to currpeer
+        xQueueSend(sendmqttQueue, ("sendv " + currpeer).c_str(), 0);    //  send prepared buffer to currpeer
+      }
+
+      else {    //  everything else is just a peer change so make prep the currpeer and display currpeer
+        prep = currpeer;
+
+        xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){0, 1, currpeer + "P"}, 0);
+        xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){0, 0, currpeer + "L"}, 0);
+
+        //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer    for now first show profile of next peer then do a full refresh with 'L'atest foto of next peer to also clear the partial overlay
+        //xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+      }
+
+      sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen   //  TODO make this a local var in showtas
+  });
+
+
+
+  /*
   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
 
     if ( sendscreents) {    //  when already in sendscreen this preps next slot
@@ -560,6 +609,7 @@ void initflanks() {
     //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
 
   });
+  */
 
   //belowus.bind(Event_DoubleClick, [](){
   //  xQueueSend(sendmqttQueue, ("sendp " + currpeer).c_str(), 0);    //  just annoy peer with profile
@@ -570,7 +620,9 @@ void initflanks() {
 //Preferences prefs;    //  commented so no redfinition error
 void setup() {
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
-  prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff  
+  prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
+
+  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
 
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
 
@@ -579,12 +631,11 @@ void setup() {
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
   initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
   initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
-  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
 
   feedlog("init done");
 
-  delay(500);
-  
+  //delay(500);
+
   xQueueSend(showQueue, "fulllocalL", 0); // WHY DOES THIS NOT WORK????
 
   // TODO add a boot screen of some sort currently the showTas does not support this 
