@@ -488,6 +488,9 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
     static String destination = "";    // static to persist across chunks
 
+    // TODO allocate memory for a rcvbuff here and free it later hopefully this is possible inside of lambda
+
+
     if (!index){
       totalSize = request->header("Content-Length").toInt();
       destination = request->getParam("peer")->value();
