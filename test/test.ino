@@ -69,7 +69,7 @@ Preferences prefs;    //  first declaration of preferences as perfs
 TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
-void showTas(void *parameter) {    //  this handles servo movement
+void showTas(void *parameter) {    //  this handles the epaper
   struct showstct { uint8_t sendscreen = 0; uint8_t partial = 0; char nvsalias[15] = ""; }; showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5 with length of nvsalias so 20 chars
 
   //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
@@ -373,6 +373,11 @@ void recv( String msg ){    //  this uses string likely char array is better see
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
     uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
 
+
+    // TODO replace nvsalias with user input eg peer kenny secret.... but check for length < ?? chars!!
+    //      then make struct with name[??], hkdf[32], latest[150000], profile[15000] for kenny and save this in nvs with key "number of peers+1"
+    //      update number of peers (or just iterate over keys starting form 0 until number is not found wich means this is next peer)
+
     String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
     }
@@ -512,17 +517,24 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 }
 
 
+TaskHandle_t flanksTasHandle;
+void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
+
 //InterruptButton belowus(20, LOW);    //  default longpress is 750ms
 //InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
 //InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
-InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+  InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+  InterruptButton::setMode(Mode_Synchronous);    // Defaults to Asynchronous (immediate like an ISR and not actioned in main loop)
 //InterruptButton::m_RTOSservicerStackDepth = 4096; // Use larger values for more memory intensive functions if using Asynchronous mode.
-void initflanks() {
+//void initflanks() {
+
+  static uint8_t sendscreen = 0;
+  static char prep[16] = "";
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
-    if ( sendscreents) {    //  when already in sendscreen this preps next slot
+    if ( sendscreen) {    //  when already in sendscreen this preps next slot
 
-      //   ------- TODO --------- 
+      //   ------- TODO ---------
       //   restructure async queses to use structs and TRY TO REMOVE STRINGS where possible eg prep should be char[] or string (not String) i think
       //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
       //   package falnk into its own task perhaps this is not a good idea but it seems more consice with the rest of this and likely the lib does the same thing i think perhaps chekc this and perhaps use hybrid mode instead of syncronous wit own rtos task
@@ -539,7 +551,7 @@ void initflanks() {
         return; }    //  show slot in overlay and return eraly aslong as max slot is not reached
     }
 
-    if (!sendscreents || prep == "slot6") {    //  when not in sendscreen or last slot is reached this preps the next peer and resets slot
+    if (!sendscreen || prep == "slot6") {    //  when not in sendscreen or last slot is reached this preps the next peer and resets slot
       String peerString = prefs.getString("peers", "local");
       if (peerString.indexOf(currpeer)+currpeer.length()+1+1 > peerString.length()) prep = "local";   //  account for trailing space here test for last peer and wrap
       else prep = peerString.substring( peerString.indexOf(currpeer)+currpeer.length()+1, peerString.indexOf(' ', peerString.indexOf(currpeer)+currpeer.length()+1) );    //  advance to next peer in list so this is the next peer or local when no peers set
@@ -550,7 +562,7 @@ void initflanks() {
       if (prep == "slot6") prep = "slot0";
     }
 
-    sendscreents = 1;  //  TODO make this a local var in showtas
+    sendscreen = 1;  //  TODO make this a local var in showtas
   });
 
 
@@ -583,6 +595,10 @@ void initflanks() {
       sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen   //  TODO make this a local var in showtas
   });
 
+  while(true){
+    InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
+    vTaskDelay(1);
+  }
 
 
   /*
@@ -622,14 +638,19 @@ void setup() {
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
-  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to display images on epaper
+  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
 
   initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
 
   tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
 
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
-  initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
+  
+
+  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
+  //initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
+
+
   initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
 
   feedlog("init done");
