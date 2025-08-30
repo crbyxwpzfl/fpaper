@@ -370,13 +370,20 @@ void recv( String msg ){    //  this uses string likely char array is better see
     prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
   }
   if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
-    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 15 bytes from secret for nvs alias
-    uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
+    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+    
+    
+    //uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
 
 
     // TODO replace nvsalias with user input eg peer kenny secret.... but check for length < ?? chars!!
     //      then make struct with name[??], hkdf[32], latest[150000], profile[15000] for kenny and save this in nvs with key "number of peers+1"
     //      update number of peers (or just iterate over keys starting form 0 until number is not found wich means this is next peer)
+
+  struct peerstct  { char name[16]; char hkdf[16]; char latest[16]; char profile[16]; char slots[5][16]; };    //  this is acts as a lut to avoid String concatination stuff but is this really better
+
+   prefs.getBytes( 1 , structbuff, len);    //  get peer struct wich has all the keys for this peers hkdf, latest, profile, name each with is a char[16]
+   prefs.getBytes( structbuff."value" , buf, bufLen);    //  get the actual value form the key
 
     String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
         nvsalias += (char)((aliasbuff[i] % 26) + 'a');
