@@ -330,16 +330,21 @@ void printWatermarkTas(void *count){
 //Preferences prefs;    //  commented so no redfinition error
 void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
   if ( msg.indexOf("help") >= 0 ) {
+    String peerstring = "";
+    char i[2] = {'0', '\0'}; while (prefs.isKey(i)) { 
+      peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
+      i[0]++;
+    }
+
     feedlog("\n \n"
          "\nwhen wlan fails an access point spawns \n"
          " ssid 'ssid'         sets wlan '" + prefs.getString("ssid", "N.A.") + "' \n"
          " pass 'password'     sets password \n"
                                 
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
-         " user 'you'          sets your peer name \n"
-         " peer 'others'       adds peer to '" + prefs.getString("peers", "local") + "' \n"
-         " serv 'mqtt://url'   sets server '" + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "' \n"
-         " topic 'mqtt/topic'  sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
+         " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
+         " serv 'mqtt://url'    sets server '" + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "' \n"
+         " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
 
          "\nservo config. please take finger off before \n"
          " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
@@ -366,13 +371,25 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("serv ") == 0 ) {
     prefs.putString("mqserv", msg.substring(5)); feedlog("mqtt server set to '" + msg.substring(5) + "'\n"); return;
   }
-  if ( msg.indexOf("user ") == 0 ) {
-    prefs.putString("publ", msg.substring(5)); feedlog("name set to '" + msg.substring(5) + "'\n"); return;
-  }
-  if ( msg.indexOf("peer ") == 0 ) {  // TODO rename peers to secrets and error if secret contains space or is longer than 15 chars because this is max nvs key length
-    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-    
-    
+  if ( msg.indexOf("peer ") == 0 ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
+
+    char alias[16] = "";
+    strcpy(alias, msg.substring(5, msg.indexOf(" ", 5)).c_str());
+
+    if ( strlen(alias) > 7 ) { feedlog("alias too long max 7 chars \n"); return; }    //  check for max length of 7 since len("alias") + len("profile") < 15 nvs alias length
+
+    if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
+
+    char i[2] = {'0', '\0'}; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
+    prefs.putString(i, alias);    //  put alias into nvs
+
+    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+
+    strcat(alias, "hkdf");    //  adds hkdf to peer name
+
+    prefs.putBytes(alias, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
+    feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
+
     //uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
 
 
@@ -380,21 +397,21 @@ void recv( String msg ){    //  this uses string likely char array is better see
     //      then make struct with name[??], hkdf[32], latest[150000], profile[15000] for kenny and save this in nvs with key "number of peers+1"
     //      update number of peers (or just iterate over keys starting form 0 until number is not found wich means this is next peer)
 
-  struct peerstct  { char name[16]; char hkdf[16]; char latest[16]; char profile[16]; char slots[5][16]; };    //  this is acts as a lut to avoid String concatination stuff but is this really better
+    //struct peerstct  { char name[16]; char hkdf[16]; char latest[16]; char profile[16]; char slots[5][16]; };    //  this is acts as a lut to avoid String concatination stuff but is this really better
 
-   prefs.getBytes( 1 , structbuff, len);    //  get peer struct wich has all the keys for this peers hkdf, latest, profile, name each with is a char[16]
-   prefs.getBytes( structbuff."value" , buf, bufLen);    //  get the actual value form the key
+   //prefs.getBytes( 1 , structbuff, len);    //  get peer struct wich has all the keys for this peers hkdf, latest, profile, name each with is a char[16]
+   //prefs.getBytes( structbuff."value" , buf, bufLen);    //  get the actual value form the key
 
-    String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
-        nvsalias += (char)((aliasbuff[i] % 26) + 'a');
-    }
+    //String nvsalias = ""; for (size_t i = 0; i < 14; i++) {    //  nvs only allowes alphanumeric perhaps hex encoding is better since this has distribution bias but out of hkdf this should fine pls say if not
+    //    nvsalias += (char)((aliasbuff[i] % 26) + 'a');
+    //}
     
-    prefs.putString("peers", prefs.getString("peers", "local") + " " + nvsalias + " ");    //  here the trailing space is to find last peer correctly in showTas add new peer to peers list in preferences
+    //prefs.putString("peers", prefs.getString("peers", "local") + " " + nvsalias + " ");    //  here the trailing space is to find last peer correctly in showTas add new peer to peers list in preferences
 
     // obsolete now i guess  String peers = prefs.getString("peers", ""); prefs.putString("peers", (peers == "") ? nvsalias : peers + " " + nvsalias);    //  add new peer to peers list in preferences
     
-    prefs.putBytes((nvsalias + "H").c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
-    feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'"); return;
+    //prefs.putBytes((nvsalias + "H").c_str(), hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
+    //feedlog("added secret '" + msg.substring(5) + "' with alias '" + nvsalias + "'"); return;
 
 
 
@@ -485,7 +502,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
   server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "profile slot1 slot2 slot3 slot4 slot5");    //  send slot list
+    request->send(200, "text/plain", "profile 1 2 3 4 5");    //  send slot list
   });
 
 
@@ -542,6 +559,10 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   static char prep[16] = "";
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
+    
+    Serial.println("btn down");
+    /* -------- test
+
     if ( sendscreen) {    //  when already in sendscreen this preps next slot
 
       //   ------- TODO ---------
@@ -573,6 +594,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     }
 
     sendscreen = 1;  //  TODO make this a local var in showtas
+    -------------- */ 
   });
 
 
@@ -580,9 +602,11 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
 
 
-
   // TODO test if this resets for multible key presses or if this fires multible times
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
+
+    Serial.println("double click");
+    /* ------------- TEST
     Serial.println("timeout reached will do stuff now");
 
       if (prep.indexOf("slot") == 0) {    //  when slot in prep then send slot to current peer
@@ -603,6 +627,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       }
 
       sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen   //  TODO make this a local var in showtas
+      --------------- */
   });
 
   while(true){
