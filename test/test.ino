@@ -345,6 +345,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
          " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
          " serv 'mqtt://url'    sets server '" + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "' \n"
          " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
+         //" slots 'count'        sets the available slots '" + prefs.getString("slotcount", "4") + "' \n"
 
          "\nservo config. please take finger off before \n"
          " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
@@ -359,6 +360,9 @@ void recv( String msg ){    //  this uses string likely char array is better see
          " apt upgrade 'link'  sets firmware url for next restart \n"
          " rm -rf              chill this just clears preferences\n\n\n" ); return;
   }
+  //if (msg.indexOf("slots ") == 0) {
+  //  prefs.putString("slotcount", msg.substring(6)); feedlog("'" + msg.substring(6) + "' slots available\n"); return;
+  //}
   if (msg.indexOf("topic ") == 0) {
     prefs.putString("mqtop", msg.substring(6)); feedlog("mqtt topic set to '" + msg.substring(6) + "'\n"); return;
   }
@@ -378,10 +382,11 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
     if ( strlen(alias) > 7 ) { feedlog("alias too long max 7 chars \n"); return; }    //  check for max length of 7 since len("alias") + len("profile") < 15 nvs alias length
 
-    if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
+    if (!prefs.isKey("0")) prefs.putString("8", "local");    //  when local peer not found do initialise local here start at eight here since '0' to '7' are slots for fotos
 
-    char i[2] = {'0', '\0'}; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
-    prefs.putString(i, alias);    //  put alias into nvs
+    //char i[2] = {'8', '\0'};  TODO rm
+    char i[] = "8"; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
+    prefs.putString(i, alias);    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
 
     uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
 
@@ -501,34 +506,38 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   WebSerial.begin(&server);    //  init webserial
 
 
-  server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "profile 1 2 3 4 5");    //  send slot list
-  });
+  // TODO rm
+  //server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
+  //server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
+  //  request->send(200, "text/plain", "profile 0 1 2 3 4 5 6 7");    //  send slot list
+  //});
 
 
   server.on("/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
-    static String destination = "";    // static to persist across chunks
-
-    // TODO allocate memory for a rcvbuff here and free it later hopefully this is possible inside of lambda
-
+    //static String destination = "";    // static to persist across chunks  // TODO rm
+    static char slot[12];    // static to persist across chunks this max is 'profile'
+    static uint8_t rcvbuff[15000];    // static buffer allocated once
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
-      destination = request->getParam("peer")->value();
-      feedlog("file is for " + destination);
+      //destination = request->getParam("slot")->value();
+      //destination = request->getParam("peer")->value();
+      strncpy(slot, request->getParam("slot")->value().c_str(), 8);    //  max copy eight chars for 'profile' here
+      feedlog("file is for slot " + String(slot));
     }
-    if (len + index > sizeof(volatileBuff)) {
+    if (len + index > sizeof(rcvbuff)) {
       feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
     }
     else if (len) {
       feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
-      memcpy(volatileBuff + index, data, len);    //  copy data to volatile buffer
+      memcpy(rcvbuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){    //  just save the recieved buffer to nvs
-      prefs.putBytes( ((destination == "profile") ? "localP" : destination).c_str(), volatileBuff, sizeof(volatileBuff));    //  save profile to 'localP'
+      prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'localprofile' or save foto to 'number + slot'
+      feedlog("file saved to " + String(slot));
 
       //xQueueSend(sendmqttQueue, ("sendp " + destination).c_str(), 0);    //  send personal profile to peer
       //xQueueSend(sendmqttQueue, ("sendv " + destination).c_str(), 0);    //  send preped volatile buffer to peer
@@ -556,19 +565,61 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 //void initflanks() {
 
   static uint8_t sendscreen = 0;
-  static char prep[16] = "";
+  static char prep[2] = '7';    //  initially perp last slot so first increment goes to '8' wich is 'local'
+  static char currpeer[16] = '8';    //  initially peer is local
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
-    
-    Serial.println("btn down");
-    /* -------- test
 
-    if ( sendscreen) {    //  when already in sendscreen this preps next slot
+    if (prep != currpeer)    //  when already in sendscreen or prep is not equal to currpeer only happens when we already are in sendscreen
+      // this assumes char '0' to char '8' are slots and after that are peers
+
+
+
+
+
+
+    // this blow could work i gues to iterate over slots and currentpeer
+
+    //  for down event    this starts with 7 goes to 8/local then goes 0/slot - 7/slot and so on... and every loop this shows profile of current peer
+    prep[0] = ++prep[0] % (currentpeer + 1);    //  wrap with currentpeer + one to show profile of current peer
+    if (prep[0] == 8) prep[0] = prep[0] + currentpeer - 8;    //  for '8'/'local' this adds 0 so prep stays '8'/'local' for peer '9' this adds one
+    xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){1, 1, prep}, 0);    //  show the preped slot in overlay
+
+    //  for timerup event
+    if (prep[0] < 8) // send slot to currentpeer
+    if (prep[0] > 8) // make nextpeer the currentpeer then reset prep[0] = currpeer-1;
+
+
+
+
+
+
+
+    
+    //  for down event click this starts with 7 goes to 8/local then goes 0/slot - 7/slot and so on...
+    prep[0] = ++prep[0] % 9;    //  wrap with max slot + one to show profile of current peer
+    xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){1, 1, prep}, 0);    //  show the preped slot in overlay
+    
+    //  for timerup event
+    if (prep[0] < 8) // send slot to currentpeer
+    if (prep[0] > 8) // make nextpeer the currentpeer
+
+
+
+
+
+    if ( sendscreen) {    //  when already in sendscreen this preps next slot to be sent after double click timeout
 
       //   ------- TODO ---------
       //   restructure async queses to use structs and TRY TO REMOVE STRINGS where possible eg prep should be char[] or string (not String) i think
       //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
       //   package falnk into its own task perhaps this is not a good idea but it seems more consice with the rest of this and likely the lib does the same thing i think perhaps chekc this and perhaps use hybrid mode instead of syncronous wit own rtos task
+
+
+
+      xQueueSend(showQueue, &(struct { uint8_t sendscreen; uint8_t partial; char nvsalias[15]; }){1, 1, prep}, 0);    //  show the preped slot in overlay
+
+
 
       prep = "slot" + String(prep.substring(4).toInt() + 1);    //  prep slot to be sent when sendscreen timout runs out
       if (prep != "slot6" ) {
@@ -594,19 +645,11 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     }
 
     sendscreen = 1;  //  TODO make this a local var in showtas
-    -------------- */ 
   });
-
-
-
-  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
-
 
   // TODO test if this resets for multible key presses or if this fires multible times
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
 
-    Serial.println("double click");
-    /* ------------- TEST
     Serial.println("timeout reached will do stuff now");
 
       if (prep.indexOf("slot") == 0) {    //  when slot in prep then send slot to current peer
@@ -627,8 +670,9 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       }
 
       sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen   //  TODO make this a local var in showtas
-      --------------- */
   });
+
+  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
 
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
