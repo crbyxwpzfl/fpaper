@@ -70,7 +70,7 @@ TaskHandle_t showTasHandle;
 QueueHandle_t sendmqttQueue;    //  handle for mqtt message queue see task belowus
 QueueHandle_t showQueue;    //  handle for servo queue
 void showTas(void *parameter) {    //  this handles the epaper
-  struct showstct { uint8_t sendscreen = 0; uint8_t partial = 0; char nvsalias[15] = ""; }; showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5 with length of nvsalias so 20 chars
+  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }; showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5 with length of nvsalias so 20 chars
 
   //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
@@ -79,10 +79,15 @@ void showTas(void *parameter) {    //  this handles the epaper
   display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
   uint8_t showBuff[15000];
+  char ocupado[5];    //  save the screen state either user or prog or empty
 
   while(true){
     if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       showstct show; xQueueReceive(showQueue, &show, 0);
+
+      if ( ocupado && show.ocupado && strcmp(ocupado, show.ocupado) ) return;    //  ignore all requests while screen is ocupado with an somthing else
+
+      strcpy(ocupado, show.ocupado);    //  save screen state
 
       if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this returns null and leaves showBuff
 
@@ -375,24 +380,33 @@ void recv( String msg ){    //  this uses string likely char array is better see
   if ( msg.indexOf("serv ") == 0 ) {
     prefs.putString("mqserv", msg.substring(5)); feedlog("mqtt server set to '" + msg.substring(5) + "'\n"); return;
   }
+
+  // TODO add function to delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
+
+  // TODO add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
+
   if ( msg.indexOf("peer ") == 0 ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
 
-    char alias[16] = "";
-    strcpy(alias, msg.substring(5, msg.indexOf(" ", 5)).c_str());
+    //char alias[16] = "";
+    //strcpy(alias, msg.substring(5, msg.indexOf(" ", 5)).c_str());
 
-    if ( strlen(alias) > 7 ) { feedlog("alias too long max 7 chars \n"); return; }    //  check for max length of 7 since len("alias") + len("profile") < 15 nvs alias length
+    //if ( strlen(alias) > 7 ) { feedlog("alias too long max 7 chars \n"); return; }    //  check for max length of 7 since len("alias") + len("profile") < 15 nvs alias length 
 
-    if (!prefs.isKey("0")) prefs.putString("8", "local");    //  when local peer not found do initialise local here start at eight here since '0' to '7' are slots for fotos
+    if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
 
-    //char i[2] = {'8', '\0'};  TODO rm
-    char i[] = "8"; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
-    prefs.putString(i, alias);    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
+    //char i[2] = {'0', '\0'};  TODO rm
+    //char i[16] = "0"; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
+    
+    uint16_t i = prefs.getUShort("peercount", 0) + 1;    //  read current peer count and add one
+    prefs.putUShort("peercount", i);    //  put incremented peer count
 
-    uint8_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+    prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
 
-    strcat(alias, "hkdf");    //  adds hkdf to peer name
+    uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
 
-    prefs.putBytes(alias, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'nvsaliasH'
+    strcat(i, "hkdf");    //  adds hkdf to peer
+
+    prefs.putBytes(i, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'index + hkdf'
     feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
 
     //uint8_t aliasbuff[15]; hkdf<SHA256>( aliasbuff, 14, msg.substring(5).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 14 bytes from secret for nvs alias and leave one byte for specifing associated information like nvsaliasP for profile foto or nvsaliasH for encryption hkdf
@@ -506,7 +520,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   WebSerial.begin(&server);    //  init webserial
 
 
-  // TODO rm
+  // TODO reinstante this and pass slot count +1 here so user always can add fotos
   //server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
   //server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
   //  request->send(200, "text/plain", "profile 0 1 2 3 4 5 6 7");    //  send slot list
@@ -536,8 +550,10 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       memcpy(rcvbuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){    //  just save the recieved buffer to nvs
-      prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'localprofile' or save foto to 'number + slot'
+      prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
       feedlog("file saved to " + String(slot));
+
+      // TODO when prefs.get slotcount < slot then update slotcount to new value
 
       //xQueueSend(sendmqttQueue, ("sendp " + destination).c_str(), 0);    //  send personal profile to peer
       //xQueueSend(sendmqttQueue, ("sendv " + destination).c_str(), 0);    //  send preped volatile buffer to peer
@@ -560,16 +576,47 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 //InterruptButton belowus(20, LOW, GPIO_MODE_INPUT, 420);    //  why does this not work inside initflanks
 //InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 420);    //  TODO reinstate above this is ony for testig we have her pin 2
   InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
-  InterruptButton::setMode(Mode_Synchronous);    // Defaults to Asynchronous (immediate like an ISR and not actioned in main loop)
-//InterruptButton::m_RTOSservicerStackDepth = 4096; // Use larger values for more memory intensive functions if using Asynchronous mode.
+  InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
 //void initflanks() {
 
-  static uint8_t sendscreen = 0;
-  static char prep[2] = '7';    //  initially perp last slot so first increment goes to '8' wich is 'local'
-  static char currpeer[16] = '8';    //  initially peer is local
+  const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
+
+  static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
+  static char currpeer[] = "0";    //  initially peer is local
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
+    prep[0] = ++prep[0] % (slotcount+2);    //  cycle trough eight slots plus one for current peer           
+    if (prep[0] > slotcount) { xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(currpeer, "profile") }, 0); }    //  show current peer with picture in picture onece every full cycle
+    else {             xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(prep, "slot")        }, 0); }    //  show foto slot with picture in picture
+  });
 
+
+  belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
+    if (prep[0] > slotcount) {    //  when prep is a peer
+      currpeer[0] = ++currpeer[0] % (prefs.getUShort("peercount", 0) + 1) ;    //  advance peer or wrap
+      prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(currpeer, "profile") }, 0);    //  show the advanced peers profile with picture in picture
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ ""    , 0, strcat(currpeer, "latest")  }, 0);    //  show current peers latest foto with full refresh
+    } 
+    else {    //  when perep is a foto slot
+      prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
+
+      // send first send profile to current peer then send prep to current peer 
+      //xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
+      //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
+    }
+  });
+
+  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
+
+  while(true){
+    InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
+    vTaskDelay(1);
+  }
+
+
+
+  /*
     if (prep != currpeer)    //  when already in sendscreen or prep is not equal to currpeer only happens when we already are in sendscreen
       // this assumes char '0' to char '8' are slots and after that are peers
 
@@ -671,13 +718,9 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
       sendscreents = 0;    //  free the timer the zero value also means user not in sendscreen   //  TODO make this a local var in showtas
   });
+  */
 
-  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
 
-  while(true){
-    InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
-    vTaskDelay(1);
-  }
 
 
   /*
