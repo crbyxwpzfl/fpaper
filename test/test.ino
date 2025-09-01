@@ -56,7 +56,7 @@
 #include <xpwallpaper.h>  //  test image bitmap
 GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
 static uint8_t volatileBuff[15000];  // global show buffer no malloc/free necessary images are of static size
-static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to ignore own message echos
+//static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to ignore own message echos
 
 
 String currpeer = "local";    //  initally show local
@@ -85,14 +85,17 @@ void showTas(void *parameter) {    //  this handles the epaper
     if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       showstct show; xQueueReceive(showQueue, &show, 0);
 
-      if ( ocupado && show.ocupado && strcmp(ocupado, show.ocupado) ) return;    //  ignore all requests while screen is ocupado with an somthing else
+      if ( ocupado && strcmp(ocupado, show.ocupado) ) return;    //  ignore all requests while screen is ocupado with an somthing else
 
       strcpy(ocupado, show.ocupado);    //  save screen state
 
-      if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this returns null and leaves showBuff
+      if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this fills the showBuff with noise
 
       //if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
       if (!show.partial) {    //  show with full refresh
+
+        ocupado = "";    //  a full refresh always indicates a free screen
+
         display.setFullWindow();
         display.firstPage();
         do {
@@ -179,68 +182,135 @@ PsychicMqttClient mqttClient;    //  first declaration of mqttClient
 TaskHandle_t sendmqttHandle;
 //QueueHandle_t sendmqttQueue;    //  comented so no redfinition error
 void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
-  sendmqttQueue = xQueueCreate( 5, sizeof("  long ass peer name  says look here  ") );    // create queue with buffer of 5
-  char buff[] = "  long ass peer name  says look here  ";    //  this hard coded finite length stresses me in python me no have to worry me miss python
-  
+  struct sendstct { char peer[16]; char load[16]; } sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
+      //  this hard coded finite length stresses me in python me no have to worry me miss python
+
+  static uint8_t curriv[12];
   uint8_t hkdf[32];
   uint8_t cyphy[15000];    //  for encrypted bytes
   uint8_t tag[16];
 
+  
+  String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
+
+  // TODO no topics anymore just one topic so dont check topic just try to decode with all stored peer hkdfs and find peer this way
+
+
+  mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
+    if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
+    if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message ignore it
+    
+    feedlog("got message start decoding");
+
+    uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
+    uint8_t* iv = (uint8_t*)malloc(12); memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
+    uint8_t* tag = (uint8_t*)malloc(16); memcpy(tag, payload + 12, 16);    //  tag starts after iv and is 16 bytes long
+    uint8_t* cyphy = (uint8_t*)malloc(15000); memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text starts after iv and tag so and is 15000 bytes long
+
+    feedlog("Received message on topic: " + String(topic) );
+    
+    chachapoly.setIV(iv, 12);     feedlog(" set iv");
+    chachapoly.setKey(hkdf, 32);      feedlog(" set key");
+    chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
+    bool tagValid = chachapoly.checkTag(tag, 16);    //  check tag after decryption so we can see if decryption was successfull
+
+    if ( tagValid && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
+      uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
+      
+      feedlog("first decryption successfull");
+
+      if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
+      
+      free(currentProfile);
+
+      if (!sendscreents) xQueueSend(showQueue, ("part" + String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile picture in picture only when not in sendscreen
+      xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
+    }
+
+    if ( tagValid && !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
+      prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
+      
+      feedlog("second decryption successfull");
+
+      if (!sendscreents) xQueueSend(showQueue, ("full" + String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto with full refresh to clear profile overlay
+    }
+    chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
+
+  });
+
+  mqttClient.connect();
+
   while (true) {
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
-      xQueueReceive(sendmqttQueue, &buff, 0);    //  reads first word out of queue
+      sendstct send; xQueueReceive(sendmqttQueue, &send, 0);    //  reads first word out of queue
 
-      if ( !strcmp(buff, "sendv local"   ) ) {
-         prefs.putBytes( "localL", volatileBuff, sizeof(volatileBuff));    //  when recipient local save to localL
-         xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);
-      }
+     if (!prefs.getBytes( send.load, cyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); return; }    //  for invalid nvs lookups this returns null and leaves cyphy
+
+
+      //if ( !strcmp(nvsalias, "sendv local"   ) ) {
+      //   prefs.putBytes( "localL", volatileBuff, sizeof(volatileBuff));    //  when recipient local save to localL
+      //   xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);
+      //}
       //if ( !strcmp(buff, "sendv profile" ) ) prefs.putBytes( "localP", volatileBuff, sizeof(volatileBuff));    //  when recipient profile save to localP when local save to localL  ignore sendps here so no overwrites for annyos and only save once for usual send
+      if ( !send.peer ) {    //  local is "0" so falsy
+         prefs.putBytes( "0latest", cyphy, sizeof(cyphy));    //  when recipient local save to local latest
+      }
+
+      if ( send.peer ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
 
       //if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
-      if ( strcmp(buff + 6, "local") ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      //if ( strcmp(nvsalias + 6, "local") ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+        
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
-        prefs.getBytes((String(buff + 6) + "H").c_str(), hkdf, 32);    //  find the peer hkdf
+        //prefs.getBytes((String(nvsalias + 6) + "H").c_str(), hkdf, 32);    //  find the peer hkdf
+        prefs.getBytes( strcat(send.peer, "hkdf") , hkdf, 32);    //  find the peer hkdf
 
         chachapoly.setIV(curriv, 12);
         chachapoly.setKey(hkdf, 32);
+        chachapoly.encrypt(cyphy, cyphy, 15000);    //  encrypt clear bytes of load this was loaded into cyphy befor
 
         //if (strncmp(buff, "sendq ", 6) == 0) chachapoly.addAuthData("look here", 9);    //  TODO this is optional right to find listenig peers querey peers with 'sendq' this is authenticated but not encrypted
         //if (strncmp(buff, "senda ", 6) == 0) chachapoly.addAuthData("shit", 9);    //  to answer so we listening with 'senda'
 
-        if (!strncmp(buff, "sendp ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
-        if (!strncmp(buff, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileBuff, 15000);    //  with 'sendv' send current foto of volatile buffer
+        //if (!strncmp(nvsalias, "sendp ", 6)) { prefs.getBytes("localP", cyphy, 15000); chachapoly.encrypt(cyphy, cyphy, 15000); }     //  send profile
+        //if (!strncmp(nvsalias, "sendv ", 6)) chachapoly.encrypt(cyphy, volatileBuff, 15000);    //  with 'sendv' send current foto of volatile buffer
 
-        chachapoly.computeTag(tag, 16);    //  TODO chek that this can runn wihtout previously running encrypt for case "sendq " to just send look here
+        chachapoly.computeTag(tag, 16);
         chachapoly.clear();
 
-        memcpy(payload, curriv, sizeof(curriv));    //  first iv
+        memcpy(payload, curriv, sizeof(curriv));    //  pack payload with first iv
         memcpy(payload + sizeof(curriv), tag, sizeof(tag));    //  then tag
         memcpy(payload + sizeof(curriv) + sizeof(tag), cyphy, sizeof(cyphy));    //  then foto
+        memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), strncmp(send.load, "0profile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        if (!strncmp(buff, "sendp ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  send our profile with 'look here' appendix    TODO send hash of peers profile to minimize messages
-        if (!strncmp(buff, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  send foto with 'see this ' appendix
+        //if (!strncmp(nvsalias, "sendp ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  send our profile with 'look here' appendix    TODO send hash of peers profile to minimize messages
+        //if (!strncmp(nvsalias, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  send foto with 'see this ' appendix
         
-        Serial.println("packed payload try sending now to " + String(buff + 6));    //  TODO make this a feedlog message
+        Serial.println("packed payload try sending now to " + String(send.peer));    //  TODO make this a feedlog message
 
-        mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(buff + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
+        mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(nvsalias + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
 
         free(payload);
       }
 
     }
-    vTaskDelay(4000);    // just send every two second so we have enugh time to filter out our echos with curriv
+    vTaskDelay(4000);    // just send every two second so we have enugh time to filter out our echos with curriv   // TODO change this back to two seconds
   }
 }
 
 
-
+/*  todo rm this moved to mqtt task
 //Preferences prefs;    //  commented so no redfinition error
 //PsychicMqttClient mqttClient;    //  commented so no redfinition error
 void initmqtt(){    //  handle incoming mqtt
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
+
+
+  // TODO no topics anymore just one topic so dont check topic just try to decode with all stored peer hkdfs and find peer this way
+
 
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
@@ -287,7 +357,7 @@ void initmqtt(){    //  handle incoming mqtt
   xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
   mqttClient.connect();
 }
-
+*/
 
 TaskHandle_t dnsServHandle;
 DNSServer dnsServer;
@@ -579,32 +649,30 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
 //void initflanks() {
 
-  const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
+  static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
 
   static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   static char currpeer[] = "0";    //  initially peer is local
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
     prep[0] = ++prep[0] % (slotcount+2);    //  cycle trough eight slots plus one for current peer           
-    if (prep[0] > slotcount) { xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(currpeer, "profile") }, 0); }    //  show current peer with picture in picture onece every full cycle
-    else {             xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(prep, "slot")        }, 0); }    //  show foto slot with picture in picture
+    if (prep[0] > slotcount) { xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 1, strcat(currpeer, "profile") }, 0); }    //  show current peer with picture in picture onece every full cycle
+    else {             xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 1, strcat(prep, "slot")        }, 0); }    //  show foto slot with picture in picture
   });
 
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
     if (prep[0] > slotcount) {    //  when prep is a peer
       currpeer[0] = ++currpeer[0] % (prefs.getUShort("peercount", 0) + 1) ;    //  advance peer or wrap
-      prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
-      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ "user", 1, strcat(currpeer, "profile") }, 0);    //  show the advanced peers profile with picture in picture
-      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[15]; }){ ""    , 0, strcat(currpeer, "latest")  }, 0);    //  show current peers latest foto with full refresh
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 1, strcat(currpeer, "profile") }, 0);    //  show the advanced peers profile with picture in picture
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 0, strcat(currpeer, "latest")  }, 0);    //  show current peers latest foto with full refresh
     } 
     else {    //  when perep is a foto slot
-      prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
-
-      // send first send profile to current peer then send prep to current peer 
-      //xQueueSend(showQueue, ("full" + currpeer + "L").c_str(), 0);    //  queue 'L'atest foto of peer
-      //xQueueSend(showQueue, ("part" + currpeer + "P").c_str(), 0);    //  queue 'P'rofile picture of peer
+      xQueueSend(sendQueue, &(struct { char peer[16]; char load[16]; }){  currpeer, "0profile" }, 0);    //  first send our profile to current peer
+      xQueueSend(sendQueue, &(struct { char peer[16]; char load[16]; }){  currpeer, strcat(prep, "slot") }, 0);    //  then send prepped foto slot to current peer
     }
+    prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
+    xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 0, strcat(currpeer, "latest")  }, 0);    //  show current peers latest foto with full refresh
   });
 
   belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
@@ -767,13 +835,14 @@ void setup() {
   tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
 
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
-  
+
+  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
 
   xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
   //initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
 
 
-  initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
+  //initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
 
   feedlog("init done");
 
