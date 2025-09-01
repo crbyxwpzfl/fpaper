@@ -4,38 +4,23 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+todo - combine wifi, webserial, dns into one task
+
+todo - make website ask for slot count
+
+todo - stop using arduino Strings hopfully this is not just esoteric
 
 todo - how do you feel about auto updates
 
-todo - each button own quick foto
-
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
-
-todo - boot into local profile/latest
-
-todo - fix/set currpeer when recieved/show profile/latest
-
-todo - in index.html make images open with constant width
-
-todo - fix website for chrome
 
 planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib 
 
-vision - forward secrecy and somthing like diffi hellman/new hope/kyber
-
-vision - stop using derived/unique adresses fully annymise conversation
-
-vision - add clear names for peers perhaps A B system
-
-vision - portal add drag and drop images
+vision - forward secrecy and somthing like diffi hellman/newhope/kyber
 
 vision - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
 
-vision - convert global stuff to pointers eg sendBuff
-
 vision - use encryption of nvs
-
-vision - add peers dynamicly/without restart
 
 vision - auto restart on connection loss
 
