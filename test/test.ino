@@ -194,13 +194,15 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
   // TODO no topics anymore just one topic so dont check topic just try to decode with all stored peer hkdfs and find peer this way
+  //      also perhpas dont allocate mem inside .onTopic and use static taskbuffers instead. 
+  //      but make sure we can still filter echos with curriv!!!
 
 
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
-    if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
-    if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message ignore it
+    //if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
+    if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message so ignore echos
     
-    feedlog("got message start decoding");
+    feedlog("got message start decoding");    //  TODO make this debug
 
     uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
     uint8_t* iv = (uint8_t*)malloc(12); memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
