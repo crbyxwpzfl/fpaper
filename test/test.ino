@@ -185,12 +185,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   struct sendstct { char peer[16]; char load[16]; } sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
       //  this hard coded finite length stresses me in python me no have to worry me miss python
 
-  static uint8_t curriv[12];
-  uint8_t hkdf[32];
-  uint8_t cyphy[15000];    //  for encrypted bytes
-  uint8_t tag[16];
+  static uint8_t curriv[12];    //  this is written every outgoing message and read with every incoming so perhaps protect this with mutex/semaphore 
 
-  
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
   // TODO no topics anymore just one topic so dont check topic just try to decode with all stored peer hkdfs and find peer this way
@@ -203,22 +199,45 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message so ignore echos
     
     feedlog("got message start decoding");    //  TODO make this debug
+    char peer[16] = "0";    //  start with first peer
+    uint8_t tagValid = 0;
+    char peercount = prefs.getUChar("peercount");
+    uint8_t hkdf[32];
+    uint8_t iv[12];
+    uint8_t tag[16];
+    uint8_t cyphy[15000];    //  this is a bit large for stack perhpas better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
+    uint8_t temp[15000];     //  see comment abouveus
 
-    uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
-    uint8_t* iv = (uint8_t*)malloc(12); memcpy(iv, payload, 12);    //  iv starts at the beginning of payload and is 12 bytes long
-    uint8_t* tag = (uint8_t*)malloc(16); memcpy(tag, payload + 12, 16);    //  tag starts after iv and is 16 bytes long
-    uint8_t* cyphy = (uint8_t*)malloc(15000); memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text starts after iv and tag so and is 15000 bytes long
-
-    feedlog("Received message on topic: " + String(topic) );
+    //uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
     
-    chachapoly.setIV(iv, 12);     feedlog(" set iv");
-    chachapoly.setKey(hkdf, 32);      feedlog(" set key");
-    chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
-    bool tagValid = chachapoly.checkTag(tag, 16);    //  check tag after decryption so we can see if decryption was successfull
+    //uint8_t* iv = (uint8_t*)malloc(12); memcpy(iv, payload, 12);    //  iv located at the beginning of payload and is 12 bytes long
+    //uint8_t* tag = (uint8_t*)malloc(16); memcpy(tag, payload + 12, 16);    //  tag is located after iv and is 16 bytes long
+    //uint8_t* cyphy = (uint8_t*)malloc(15000); //memcpy(cyphy, payload + 12 + 16, 15000);    //  cypher text is located after iv and tag and is 15000 bytes long
+
+    feedlog("Received message on topic: " + String(topic) );     //  TODO make this a debug log
+
+    while (!tagValid && peer[0] < peercount) {    //  iterate over all peers to find whos sender
+
+
+      // TODO THIS IS PROBLEMI strcat will append hkdf for every loop -> overflow is incomming do sth about this!!
+      
+
+      peer[0]++; prefs.getBytes( strcat(peer, "hkdf") , hkdf, 32);    //  load hkdf of next peer
+
+      prefs.getBytes(snprintf(peer, sizeof(peer), "%c%s", peer[0], "hkdf"), hkdf, 32);
+
+      memcpy(cyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
+
+      chachapoly.setIV(iv, 12);     feedlog(" set iv");    //  TODO make all this debug logs
+      chachapoly.setKey(hkdf, 32);      feedlog(" set key");
+      chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
+      tagValid = chachapoly.checkTag(tag, 16);    //  check tag after decryption so we can see if decryption was successfull
+    }
 
     if ( tagValid && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-      uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
-      
+      //uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
+      prefs.getBytes( strcat(peer, ), temp, 15000 );
+
       feedlog("first decryption successfull");
 
       if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
@@ -236,11 +255,15 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       if (!sendscreents) xQueueSend(showQueue, ("full" + String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto with full refresh to clear profile overlay
     }
-    chachapoly.clear(); free(hkdf); free(iv); free(tag); free(cyphy);
+    chachapoly.clear();  //free(iv); free(tag); free(cyphy); //free(hkdf);
 
   });
 
   mqttClient.connect();
+
+  uint8_t hkdf[32];
+  uint8_t cyphy[15000];    //  this hold load wich then gets encrypted and sent
+  uint8_t tag[16];
 
   while (true) {
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
@@ -469,8 +492,8 @@ void recv( String msg ){    //  this uses string likely char array is better see
     //char i[2] = {'0', '\0'};  TODO rm
     //char i[16] = "0"; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
     
-    uint16_t i = prefs.getUShort("peercount", 0) + 1;    //  read current peer count and add one
-    prefs.putUShort("peercount", i);    //  put incremented peer count
+    char i = prefs.getUChar("peercount", '0') + 1;    //  read current peer count and add one
+    prefs.putUChar("peercount", i);    //  put incremented peer count
 
     prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
 
@@ -665,7 +688,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
     if (prep[0] > slotcount) {    //  when prep is a peer
-      currpeer[0] = ++currpeer[0] % (prefs.getUShort("peercount", 0) + 1) ;    //  advance peer or wrap
+      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') + 1));    //  advance peer or wrap the literal '0' here is the ASCII offset since all this uses ASCII enumeration
       xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 1, strcat(currpeer, "profile") }, 0);    //  show the advanced peers profile with picture in picture
       xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 0, strcat(currpeer, "latest")  }, 0);    //  show current peers latest foto with full refresh
     } 
