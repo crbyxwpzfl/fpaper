@@ -305,7 +305,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       //if (  strcmp(buff + 6, "profile") &&  strcmp(buff + 6, "local") ) {    //  here when recipient not profile and not local actually do send stuff either answer to look here with profile or annoy with just profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
       //if ( strcmp(nvsalias + 6, "local") ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         
-        uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(tag) + sizeof(cyphy) + 9);    //  allocate memory for payload
+        uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
 
@@ -328,7 +328,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         memcpy(payload, curriv, sizeof(curriv));    //  pack payload with first iv
         memcpy(payload + sizeof(curriv), sendtag, sizeof(sendtag));    //  then tag
         memcpy(payload + sizeof(curriv) + sizeof(sendtag), sendcyphy, sizeof(sendcyphy));    //  then foto
-        memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strncmp(send.load, "0profile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
+        memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "0profile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
         //if (!strncmp(nvsalias, "sendp ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "look here", 9);    //  send our profile with 'look here' appendix    TODO send hash of peers profile to minimize messages
         //if (!strncmp(nvsalias, "sendv ", 6)) memcpy(payload + sizeof(curriv) + sizeof(tag) + sizeof(cyphy), "see this ", 9);    //  send foto with 'see this ' appendix
