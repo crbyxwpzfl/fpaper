@@ -30,7 +30,7 @@
 
 
 
-#include <Arduino.h>    // all this is arduino for an esp32    so compared to c some delacrations are missing but im not sure 
+//#include <Arduino.h>    // all this is arduino for an esp32    so compared to c some delacrations are missing but im not sure 
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -206,8 +206,9 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   //      but make sure we can still filter echos with curriv!!!
 
 
-  mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
+  //mqttClient.onTopic( prefs.getString("mqtop", "fpaper/+").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    // wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     //if ( !prefs.getBytesLength( (String(topic).substring(7) + "H").c_str() ) ) return;    //  just listen to messages of our peers no sens to decode when no peer hkdf found
+  mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message so ignore echos
     
     feedlog("got message start decoding");    //  TODO make this debug
@@ -335,7 +336,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         
         Serial.println("packed payload try sending now to " + String(send.peer));    //  TODO make this a feedlog message
 
-        mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(nvsalias + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
+        //mqttClient.publish( (prefs.getString("mqtop", "fpaper/") + String(nvsalias + 6)).c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);    //  publish full length message to base topic + peer alias
+        mqttClient.publish( prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
         free(payload);
       }
@@ -420,18 +422,17 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
 //WiFiClientSecure secureClient;
 //HTTPUpdate up;
 void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
+  WiFiClientSecure secureClient;
+  HTTPUpdate up;
+
   if( airlink ) {    //  only do this when airlink has value
     prefs.putString("airlink", "");    //  disable airlink for next boot
-    
-    WiFiClientSecure secureClient;
-    HTTPUpdate up;
-    
     //String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
     secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
     up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
     up.onStart([]() { feedlog("overwrite firmware init download \n"); });
     up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
-    up.onError([](int err) { feedlog(  up.getLastErrorString() + " \n"); });
+    up.onError([&up](int err) { feedlog(  up.getLastErrorString() + " \n"); });
     up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
     HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
   }
@@ -516,9 +517,9 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
     //char i[2] = {'0', '\0'};  TODO rm
     //char i[16] = "0"; while (prefs.isKey(i)) i[0]++;    //  find first free nvs char sequentially this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
-    
-    char i = prefs.getUChar("peercount", '0') + 1;    //  read current peer count and add one
-    prefs.putUChar("peercount", i);    //  put incremented peer count
+
+    char i[] = { prefs.getUChar("peercount", '0') + 1 , '\0'};    //  read current peer count and add one
+    prefs.putUChar("peercount", i[0]);    //  put incremented peer count
 
     prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
 
@@ -728,13 +729,13 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       //xQueueSend(showQueue, &((struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 1, strcat(currpeer, "profile") }), 0);    //  show the advanced peers profile with picture in picture
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);
       //xQueueSend(showQueue, &((struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 0, strcat(currpeer, "latest")  }), 0);    //  show current peers latest foto with full refresh
-      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);
+      show.partial = 0; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);
     }
     else {    //  when perep is a foto slot
       //xQueueSend(sendQueue, &((struct { char peer[16]; char load[16]; }){  currpeer, "0profile" }), 0);    //  first send our profile to current peer
-      struct sendstct send={ "", "0profile" }; strcpy(send.peer, currpeer); xQueueSend(sendQueue, &send, 0);
+      struct sendstct send={ "", "0profile" }; strcpy(send.peer, currpeer); xQueueSend(sendmqttQueue, &send, 0);
       //xQueueSend(sendQueue, &((struct { char peer[16]; char load[16]; }){  currpeer, strcat(prep, "slot") }), 0);    //  then send prepped foto slot to current peer
-      struct sendstct send={ "", "" }; strcpy(send.peer, currpeer); sprintf(send.load, "%sslot", prep); xQueueSend(sendQueue, &send, 0);
+      strcpy(send.peer, currpeer); sprintf(send.load, "%sslot", prep); xQueueSend(sendmqttQueue, &send, 0);
     }
     prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
     //xQueueSend(showQueue, &((struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "user", 0, strcat(currpeer, "latest")  }), 0);    //  show current peers latest foto with full refresh
@@ -890,44 +891,8 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
 
 
-
-int main() {
-  Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
-  prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
-
-  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
-
-  initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
-
-  tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
-
-  xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
-
-  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
-
-  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
-  //initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
-
-
-  //initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
-
-  feedlog("init done");
-
-
-  // TODO add boot screen
-
-  for (;;) {
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
-}
-
-
-
-
-/*
-
 //Preferences prefs;    //  commented so no redfinition error
-void setup() {
+void setup() {    //  when this int main() instead this does not compile
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
@@ -958,5 +923,4 @@ void setup() {
   //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 }
 
-void loop() { }
-*/
+void loop() {vTaskDelay(pdMS_TO_TICKS(1000));}
