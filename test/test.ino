@@ -54,14 +54,14 @@
 
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
-GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
-static uint8_t volatileBuff[15000];  // global show buffer no malloc/free necessary images are of static size
+//GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
+//static uint8_t volatileBuff[15000];  // global show buffer no malloc/free necessary images are of static size
 //static uint8_t curriv[12];  // global iv buffer for chachapoly encryption and to ignore own message echos
 
 
-String currpeer = "local";    //  initally show local
-String prep = "";    //  prepared peer when sendscreen timer runs out
-uint32_t sendscreents = 0;    //  timestamp when user opened sendscreen
+//String currpeer = "local";    //  initally show local
+//String prep = "";    //  prepared peer when sendscreen timer runs out
+//uint32_t sendscreents = 0;    //  timestamp when user opened sendscreen
 
 
 
@@ -72,13 +72,15 @@ QueueHandle_t showQueue;    //  handle for servo queue
 void showTas(void *parameter) {    //  this handles the epaper
   struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }; showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5 with length of nvsalias so 20 chars
 
+
+  static GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
   //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
   display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
-  uint8_t showBuff[15000];
+  static uint8_t showBuff[15000];
   char ocupado[5];    //  save the screen state either user or prog or empty
 
   while(true){
@@ -162,14 +164,14 @@ QueueHandle_t servoQueue;    //  handle for servo queue
 void servoTas(void *parameter) {    //  this handles servo movement
   servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
-  char buf[] = "sit";    //  why does char buf[4] error help
+  char buff[] = "sit";    //  why does char buf[4] error help
   
   while(true){
     if(!xQueueIsQueueEmptyFromISR( servoQueue )){
       xQueueReceive(servoQueue, &buf, 0);    //  just do sth when queue not empty
       //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
-      if (String(buf) == "top") { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
-      if (String(buf) == "sit") { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose 
+      if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
+      if (!strcmp(buff, "sit")) { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
     }
     vTaskDelay(1);
   }
@@ -205,8 +207,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     uint8_t hkdf[32];
     uint8_t iv[12];
     uint8_t tag[16];
-    uint8_t cyphy[15000];    //  this is a bit large for stack perhpas better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
-    uint8_t temp[15000];     //  see comment abouveus
+    static uint8_t rcvcyphy[15000];    //  this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
+    static uint8_t temp[15000];     //  see comment abouveus
 
     //uint8_t* hkdf = (uint8_t*)malloc(32); prefs.getBytes((String(topic).substring(7) + "H").c_str(), hkdf, 32);    //  find hkdf of sender peer
     
@@ -262,7 +264,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   mqttClient.connect();
 
   uint8_t hkdf[32];
-  uint8_t cyphy[15000];    //  this hold load wich then gets encrypted and sent
+  static uint8_t sendcyphy[15000];    //  this hold load wich then gets encrypted and sent
   uint8_t tag[16];
 
   while (true) {
