@@ -85,7 +85,7 @@ void showTas(void *parameter) {    //  this handles the epaper
     if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       showstct show; xQueueReceive(showQueue, &show, 0);
 
-      if ( ocupado && strcmp(ocupado, show.ocupado) ) return;    //  ignore all requests while screen is ocupado with an somthing else
+      if ( ocupado && strcmp(ocupado, show.ocupado) ) return;    //  ignore all requests while screen is ocupado with an somthing else  TODO instead of returning here put stuff back in queue and do them later again
 
       strcpy(ocupado, show.ocupado);    //  save screen state
 
@@ -199,7 +199,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if ( !memcmp(curriv, payload, 12) ) return;    //  when message was our own message so ignore echos
     
     feedlog("got message start decoding");    //  TODO make this debug
-    char peer[16] = "0";    //  start with first peer
+    char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
     uint8_t tagValid = 0;
     char peercount = prefs.getUChar("peercount");
     uint8_t hkdf[32];
@@ -217,43 +217,43 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     feedlog("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
     while (!tagValid && peer[0] < peercount) {    //  iterate over all peers to find whos sender
+      peer[0]++;    //  peer initialises to '0hkdf' sojust increment pos 0 here
 
-
-      // TODO THIS IS PROBLEMI strcat will append hkdf for every loop -> overflow is incomming do sth about this!!
-      
-
-      peer[0]++; prefs.getBytes( strcat(peer, "hkdf") , hkdf, 32);    //  load hkdf of next peer
-
-      prefs.getBytes(snprintf(peer, sizeof(peer), "%c%s", peer[0], "hkdf"), hkdf, 32);
+      prefs.getBytes(peer, hkdf, 32);    //  read incremented peer hkdf into buffer
 
       memcpy(cyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
 
-      chachapoly.setIV(iv, 12);     feedlog(" set iv");    //  TODO make all this debug logs
-      chachapoly.setKey(hkdf, 32);      feedlog(" set key");
-      chachapoly.decrypt(cyphy, cyphy, 15000);   feedlog(" decrypted cypher text");
+      chachapoly.setIV(iv, 12);                                feedlog(" set iv");    //  TODO make all this debug logs
+      chachapoly.setKey(hkdf, 32);                             feedlog(" set key");
+      chachapoly.decrypt(cyphy, cyphy, 15000);                 feedlog(" decrypted cypher text");
       tagValid = chachapoly.checkTag(tag, 16);    //  check tag after decryption so we can see if decryption was successfull
     }
 
     if ( tagValid && !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
       //uint8_t* currentProfile = (uint8_t*)malloc(15000); prefs.getBytes( (String(topic).substring(7) + "P").c_str(), currentProfile, 15000 );    //  find current profile from nvsalias+'P' or leaves currentProfile as is
-      prefs.getBytes( strcat(peer, ), temp, 15000 );
+      prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
 
       feedlog("first decryption successfull");
 
-      if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( (String(topic).substring(7) + "P").c_str(), cyphy, 15000 );    //  when profile changes save recieved profile to nvsalias+'P'
-      
-      free(currentProfile);
+      if ( memcmp(currentProfile, cyphy, 15000) ) prefs.putBytes( peer, cyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'index+profile' see abouve
 
-      if (!sendscreents) xQueueSend(showQueue, ("part" + String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile picture in picture only when not in sendscreen
+      //free(currentProfile);
+
+      //xQueueSend(showQueue, ("part" + String(topic).substring(7) + "P").c_str(), 0);    //  show recieved profile picture in picture only when not in sendscreen
+
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "prog", 1, peer }, 0);    //  show recieved profile with picture in picture only when and occupie screen
+
       xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
     }
 
     if ( tagValid && !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
-      prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
+      //prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
+      prefs.putBytes( strcpy(&peer[1], "latest"), cyphy, 15000 );    //  save foto of peer wich is 'index+latest'
       
       feedlog("second decryption successfull");
 
-      if (!sendscreents) xQueueSend(showQueue, ("full" + String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto with full refresh to clear profile overlay
+      //xQueueSend(showQueue, ("full" + String(topic).substring(7) + "L").c_str(), 0);    //  show recieved foto with full refresh to clear profile overlay
+      xQueueSend(showQueue, &(struct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }){ "prog", 1, peer }, 0);    //  show recieved latest foto with full refresh this also frees occupation
     }
     chachapoly.clear();  //free(iv); free(tag); free(cyphy); //free(hkdf);
 
