@@ -245,13 +245,15 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
       sendstct send; xQueueReceive(sendmqttQueue, &send, 0);    //  reads first word out of queue
 
-    if (!prefs.getBytes( send.load, sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); return; }    //  for invalid nvs lookups this returns null and leaves cyphy
+      Serial.println("sending to " + String(send.peer));
 
-    if ( !send.peer ) {    //  local is "0" so falsy
+      if (!prefs.getBytes( send.load, sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
+
+      if ( !(send.peer[0]-'0') ) {    //  local is "0" so falsy
          prefs.putBytes( "0latest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
       }
 
-      if ( send.peer ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      if ( send.peer[0]-'0' ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
@@ -374,11 +376,14 @@ void recv( String msg ){    //  this uses string likely char array is better see
     prefs.putString("mqserv", msg.substring(5)); feedlog("mqtt server set to '" + msg.substring(5) + "'\n"); return;
   }
 
-  // --------- TODO-------  add function to delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
-
   // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
 
   if ( msg.indexOf("peer ") == 0 ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
+
+
+  // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
+  //                        overwrite secret here for already known peers
+
 
     if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
 
@@ -525,7 +530,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 TaskHandle_t flanksTasHandle;
 void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
-
+//void initflanks(){
 
 
 
@@ -534,17 +539,29 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
 
 
-  InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+  static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+
+  //  ----------- TODO ------------- 
+  //
+  // this does not register the timeout correctly for even count of presses so two presses wont trigger the timout!
+  // so stop the time yourself between timeouts!
+
   InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
+  //InterruptButton::setMode(Mode_Hybrid);
 
-  static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
 
-  static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
+  //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
+  static char slotcount = prefs.getUChar("slotcount", '8');
+
+  //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
+  static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   static char currpeer[] = "0";    //  initially peer is local
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
-    prep[0] = '0' + ((++prep[0] - '0') % (slotcount+2));    //  cycle trough eight slots plus one for current peer           
-    if (prep[0] > ('0'+slotcount) ) {
+    slotcount = prefs.getUChar("slotcount", '8');
+
+    prep[0] = '0' + ((++prep[0] - '0') % (slotcount  - '0' +2));    //  cycle trough eight slots plus one for current peer           
+    if (prep[0] > slotcount ) {
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
 
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
@@ -558,24 +575,27 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     }
   });
 
+  // on every double press this igores the keypress event so only uneven click counts work as intendet!
+  belowus.bind(Event_DoubleClick, [](){ Serial.println("double press"); });    //  this has to be registered so the lib respects the doubleclick timeout
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
-    if (prep[0] > ('0'+slotcount) ) {    //  when prep is a peer
-      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
+    if (prep[0] > slotcount ) {    //  when prep is a peer
+      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') - '0' + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
     }
     else {    //  when perep is a foto slot
-      struct sendstct send={ "", "0profile" }; strcpy(send.peer, currpeer); xQueueSend(sendmqttQueue, &send, 0);    //  first send our profile to current peer
-      strcpy(send.peer, currpeer); sprintf(send.load, "%sslot", prep); xQueueSend(sendmqttQueue, &send, 0);    //  then send prepped foto slot to current peer
+      if (currpeer[0]-'0') { struct sendstct sendprofile={ "", "0profile" }; strcpy(sendprofile.peer, currpeer); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not never to local
+      struct sendstct sendload={ "", "" }; strcpy(sendload.peer, currpeer); sprintf(sendload.load, "%sslot", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
     }
-    prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
+    //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
+    prep[0] = slotcount;
+
+    // TODO this comes to fast so dely this some how or move this line into send task
     struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
   
     feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
   
   });
-
-  belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
 
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
