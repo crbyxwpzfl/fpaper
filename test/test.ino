@@ -73,23 +73,22 @@ void showTas(void *parameter) {    //  this handles the epaper
   display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
   static uint8_t showBuff[15000];
-  char ocupado[5];    //  save the screen state either user or prog or empty
+  char ocupado[5];    //  save the screen state either user or empty
 
   while(true){
     if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
       showstct show; xQueueReceive(showQueue, &show, 0);
 
-      if ( ocupado[0] && strcmp(ocupado, show.ocupado) ) continue;    //  ignore all requests while screen is ocupado with an somthing else  TODO instead of returning here put stuff back in queue and do them later again
+      if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(showQueue, &show, 0); continue;
+        Serial.println("did a pushback");
+      }    //  this passes when no ocupado, user requests, requests with same occupation  everything else is pushed back into queue
 
-      strcpy(ocupado, show.ocupado);    //  save screen state
+      strcpy(ocupado, show.partial ? show.ocupado : "");    //  clear ocupation for full refreshes for partial refreshes ocupie screen
 
       if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this fills the showBuff with noise
 
       //if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
       if (!show.partial) {    //  show with full refresh
-
-        strcpy(ocupado, "");    //  a full refresh always indicates a free screen
-
         display.setFullWindow();
         display.firstPage();
         do {
@@ -131,7 +130,7 @@ void showTas(void *parameter) {    //  this handles the epaper
 
       display.hibernate();   //  hibernate display to save power
     }
-    vTaskDelay(1);    //  befor one second so no flicker just show every seconds now we have to check timer continously
+    vTaskDelay(1);    //  befor one second so no flicker just show every thing fast user interactions
 
 
   }
@@ -218,7 +217,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
         if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( peer, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'index+profile' see abouve
 
-        struct showstct show={ "prog", 1, "" }; strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved profile with picture in picture and occupie screen
+        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peer); strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
 
         xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
       }
@@ -229,7 +228,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         
         feedlog("second decryption successfull");
 
-        struct showstct show={ "prog", 0, "" }; strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
+        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peer); strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
       }
 
       chachapoly.clear(); return;    //  exit lambda
@@ -527,37 +526,53 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 TaskHandle_t flanksTasHandle;
 void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
 
+
+
+
+//  ---------------   TODO -------------- !!!!!!!!!!!    stop this ascii enumeration and switch to normal integers!!!!
+
+
+
+
   InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 2000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
   InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
 
   static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
 
-  static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
+  static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   static char currpeer[] = "0";    //  initially peer is local
 
   belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
-    prep[0] = ++prep[0] % (slotcount+2);    //  cycle trough eight slots plus one for current peer           
-    if (prep[0] > slotcount) { 
+    prep[0] = '0' + ((++prep[0] - '0') % (slotcount+2));    //  cycle trough eight slots plus one for current peer           
+    if (prep[0] > ('0'+slotcount) ) {
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
+
+      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+
     }
     else {
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sslot", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
+
+      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+
     }
   });
 
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
-    if (prep[0] > slotcount) {    //  when prep is a peer
-      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') + 1));    //  advance peer or wrap the literal '0' here is the ASCII offset since all this uses ASCII enumeration
+    if (prep[0] > ('0'+slotcount) ) {    //  when prep is a peer
+      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
-      show.partial = 0; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
     }
     else {    //  when perep is a foto slot
       struct sendstct send={ "", "0profile" }; strcpy(send.peer, currpeer); xQueueSend(sendmqttQueue, &send, 0);    //  first send our profile to current peer
       strcpy(send.peer, currpeer); sprintf(send.load, "%sslot", prep); xQueueSend(sendmqttQueue, &send, 0);    //  then send prepped foto slot to current peer
     }
-    prep[0] = slotcount;    // reset prep so next time current peer shows up with first press
+    prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
     struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
+  
+    feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
+  
   });
 
   belowus.bind(Event_DoubleClick, [](){ });    //  this has to be registered so the lib respects the doubleclick timeout
@@ -601,7 +616,7 @@ void setup() {    //  when this int main() instead this does not compile
 
   //delay(500);
 
-  xQueueSend(showQueue, "fulllocalL", 0); // WHY DOES THIS NOT WORK????
+  //xQueueSend(showQueue, "fulllocalL", 0); // WHY DOES THIS NOT WORK????
 
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
