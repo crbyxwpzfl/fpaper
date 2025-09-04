@@ -391,20 +391,15 @@ void recv( String msg ){    //  this uses string likely char array is better see
   //                      - but this would add complexety of malloc when ever we have to access the peers
   //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
 
-  char test[][7] = {{"peer0"}, {"peer1"}, {"peer2"}};
-  prefs.putBytes("peers", test, sizeof(test));    //  store peer list in nvs as byte array TODO check if this works
 
-  size_t length = prefs.getBytesLength("peers");    //  find current buffer length
-  char (*peers)[7] = (char (*)[7]) malloc(0);    //  allocate memory for peer list
-  if (!peers) { 
-    feedlog("failed to allocate memory for peers\n"); 
-    //peers = {"local"};
-    peers = (char (*)[7]) (char[][7]){ "local" }; 
-  }
-  //prefs.getBytes("peers", peers, length);    //  read peer list
-  
+  size_t size = prefs.getBytesLength("peers"); char (*peers)[7] = (char (*)[7]) malloc( size );    //  allocate memory for peer list
+
+  if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+
+  prefs.getBytes("peers", peers, size);    //  read peer list
+
   Serial.println("peer0:" + String(peers[0]));
-  //free(peers);    //  free memory for peer list
+  free(peers);    //  free memory for peer list
 
 
   //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
@@ -667,6 +662,9 @@ void setup() {    //  when this int main() instead this does not compile
 
 
   //initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
+
+
+  if(!prefs.getBytesLength("peers")) { const char def[][7] = {{"local"}}; prefs.putBytes("peers", def, sizeof(def)); }
 
   feedlog("init done");
 
