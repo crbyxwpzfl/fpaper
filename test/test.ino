@@ -330,10 +330,17 @@ void printWatermarkTas(void *count){
 void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
   if ( msg.indexOf("help") >= 0 ) {
     String peerstring = "";
-    char i[2] = {'0', '\0'}; while (prefs.isKey(i)) { 
-      peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
-      i[0]++;
-    }
+    
+    size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
+    prefs.getBytes("peers", peers, size);    //  read peer list
+    if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+    for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + " "; }    //  iterate over peers and add to peerstring
+    free(peers);
+
+    //char i[2] = {'0', '\0'}; while (prefs.isKey(i)) {
+      //peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
+      //i[0]++;
+    //}
 
     feedlog("\n \n"
          "\nwhen wlan fails an access point spawns \n"
@@ -390,15 +397,20 @@ void recv( String msg ){    //  this uses string likely char array is better see
   //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
   //                      - but this would add complexety of malloc when ever we have to access the peers
   //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
+  //                      - requires more nvs reads one for size and one for data
 
-
-  size_t size = prefs.getBytesLength("peers"); char (*peers)[7] = (char (*)[7]) malloc( size );    //  allocate memory for peer list
+  size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
 
   if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
 
   prefs.getBytes("peers", peers, size);    //  read peer list
 
-  Serial.println("peer0:" + String(peers[0]));
+  strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
+
+  //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
+  
+  prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
+  
   free(peers);    //  free memory for peer list
 
 
@@ -664,7 +676,7 @@ void setup() {    //  when this int main() instead this does not compile
   //initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
 
 
-  if(!prefs.getBytesLength("peers")) { const char def[][7] = {{"local"}}; prefs.putBytes("peers", def, sizeof(def)); }
+  if(!prefs.getBytesLength("peers")) { const char def[][16] = {{"local"}}; prefs.putBytes("peers", def, sizeof(def)); }
 
   feedlog("init done");
 
