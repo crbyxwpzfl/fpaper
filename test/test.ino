@@ -383,6 +383,19 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
   // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
   //                        overwrite secret here for already known peers
+  //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
+
+
+  size_t length = prefs.getBytesLength("peers");    //  find current buffer length
+  if (length) {
+    char (*peers)[7] = (char (*)[8]) malloc( length );    //  allocate memory for peer list
+    prefs.getBytes("peers", peers, length);    //  read peer list
+  }
+  Serial.println("peer1:" + String(peers[1]));
+
+
+
+
 
 
     if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
