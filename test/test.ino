@@ -539,7 +539,8 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
 
 
-  static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+  //static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
+  static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT);
 
   //  ----------- TODO ------------- 
   //
@@ -549,6 +550,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
   //InterruptButton::setMode(Mode_Hybrid);
 
+  static volatile uint32_t lastpress = 0;
 
   //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
   static char slotcount = prefs.getUChar("slotcount", '8');
@@ -557,7 +559,9 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   static char currpeer[] = "0";    //  initially peer is local
 
-  belowus.bind(Event_KeyDown, []() {    //  for each press prep the stuff to do
+  belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
+    lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
+
     slotcount = prefs.getUChar("slotcount", '8');
 
     prep[0] = '0' + ((++prep[0] - '0') % (slotcount  - '0' +2));    //  cycle trough eight slots plus one for current peer           
@@ -575,30 +579,30 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     }
   });
 
-  // on every double press this igores the keypress event so only uneven click counts work as intendet!
-  belowus.bind(Event_DoubleClick, [](){ Serial.println("double press"); });    //  this has to be registered so the lib respects the doubleclick timeout
-
-  belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
-    if (prep[0] > slotcount ) {    //  when prep is a peer
-      currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') - '0' + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
-    }
-    else {    //  when perep is a foto slot
-      if (currpeer[0]-'0') { struct sendstct sendprofile={ "", "0profile" }; strcpy(sendprofile.peer, currpeer); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not never to local
-      struct sendstct sendload={ "", "" }; strcpy(sendload.peer, currpeer); sprintf(sendload.load, "%sslot", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
-    }
-    //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
-    prep[0] = slotcount;
-
-    // TODO this comes to fast so dely this some how or move this line into send task
-    struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
-  
-    feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
-  
-  });
-
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
+    
+    if ( lastpress && (millis() - lastpress > 2000)) {    //  when no press for two seconds actually do the stuff here
+      lastpress = 0;    //  disarm this until real press
+
+      if (prep[0] > slotcount ) {    //  when prep is a peer
+        currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') - '0' + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
+        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
+      }
+      else {    //  when perep is a foto slot
+        if (currpeer[0]-'0') { struct sendstct sendprofile={ "", "0profile" }; strcpy(sendprofile.peer, currpeer); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not never to local
+        struct sendstct sendload={ "", "" }; strcpy(sendload.peer, currpeer); sprintf(sendload.load, "%sslot", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
+      }
+      //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
+      prep[0] = slotcount;
+
+      vTaskDelay(500);    //  wait some time to let send finish and then show
+      // TODO this comes to fast so dely this some how or move this line into send task
+      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
+    
+      feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
+    }
+
     vTaskDelay(1);
   }
 
