@@ -383,21 +383,40 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
   // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
   //                        overwrite secret here for already known peers
-  //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
 
+
+
+
+  //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
+  //                      - but this would add complexety of malloc when ever we have to access the peers
+  //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
+
+  char test[][7] = {{"peer0"}, {"peer1"}, {"peer2"}};
+  prefs.putBytes("peers", test, sizeof(test));    //  store peer list in nvs as byte array TODO check if this works
 
   size_t length = prefs.getBytesLength("peers");    //  find current buffer length
-  if (length) {
-    char (*peers)[7] = (char (*)[8]) malloc( length );    //  allocate memory for peer list
-    prefs.getBytes("peers", peers, length);    //  read peer list
+  char (*peers)[7] = (char (*)[7]) malloc(0);    //  allocate memory for peer list
+  if (!peers) { 
+    feedlog("failed to allocate memory for peers\n"); 
+    //peers = {"local"};
+    peers = (char (*)[7]) (char[][7]){ "local" }; 
   }
-  Serial.println("peer1:" + String(peers[1]));
+  //prefs.getBytes("peers", peers, length);    //  read peer list
+  
+  Serial.println("peer0:" + String(peers[0]));
+  //free(peers);    //  free memory for peer list
+
+
+  //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
+  //                        then convert to key (char array) with sprintf(buffer, "%u", number);    //  this gives a char array with the number in it to use as key
+  //char peerindexchar[10];
+  //uint32_t peerindexuint = 0;
 
 
 
 
 
-
+   /*
     if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
 
     //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
