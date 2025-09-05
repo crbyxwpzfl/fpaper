@@ -529,11 +529,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
   WebSerial.begin(&server);    //  init webserial
 
-  // ------- TODO --------- reinstante this and pass slot count +1 here so user always can add fotos
-  server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
-  //server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-    //request->send(200, "text/plain",  String( (prefs.getUInt("slots", 0) + 1) ));    //  send current slot count plus one
 
+  server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
     char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);
   });
 
@@ -606,47 +603,49 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   static volatile uint32_t lastpress = 0;
 
   //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
-  static char slotcount = prefs.getUChar("slotcount", '8');
+  //static char slotcount = prefs.getUChar("slotcount", '8');
+  static char slots = prefs.getUInt("slots", 0);
 
-  //static size_t size;
+  static size_t size;
+
+  static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
 
   //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
-  static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
-  
-  //static uint32_t perp = 0;
+  //static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
 
-  static char currpeer[] = "0";    //  initially peer is local
+  static uint32_t prep = slots;
+
+  //static char currpeer[] = "0";    //  initially peer is local
+  static uint32_t currpeer = 0;    //  initially peer is local
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
-    
-    /*
-    if (!peers) { 
-      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
+
+    if (!peers) {
+      slots = prefs.getUInt("slots", 0);
+
+      size_t size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
       if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
     }     //  when no peers allocate memory for peer list
 
     lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
-    
-    perp = ++perp % ((size/16)+2);    //  cycle trough eight slots plus one for current peer
-    if (perp > size/16) {
-      struct showstct show={ "user", 1, strcat(peer[prep], "profile") }; xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
+
+    prep = ++prep % (slots+1);    //  cycle trough eight slots plus one for current peer
+    if (!prep) {    //  for zero show current peer
+      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
 
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
     }
     else {
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sslot", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
+      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%u", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
 
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
     }
-    */
 
 
 
-
-
-
+     /*
     slotcount = prefs.getUChar("slotcount", '8');
 
     prep[0] = '0' + ((++prep[0] - '0') % (slotcount  - '0' +2));    //  cycle trough eight slots plus one for current peer           
@@ -662,6 +661,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
     }
+    */
   });
 
   while(true){
@@ -670,6 +670,34 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     if ( lastpress && (millis() - lastpress > 2000)) {    //  when no press for two seconds actually do the stuff here
       lastpress = 0;    //  disarm this until real press
 
+      if (!prep) {    //  when prep is a peer
+        currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
+        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
+      }
+      else {    //  when perep is a foto slot
+        if (currpeer) { struct sendstct sendprofile={ "", "localprofile" }; strcpy(sendprofile.peer, peers[currpeer]); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
+        struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
+      }
+      //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
+      prep = slotcount;
+      free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
+
+      vTaskDelay(500);    //  wait some time to let send finish and then show
+      // TODO this comes to fast so dely this some how or move this line into send task
+      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
+    
+      feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
+
+
+
+
+
+
+
+
+
+
+      /*
       if (prep[0] > slotcount ) {    //  when prep is a peer
         currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') - '0' + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
         struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
@@ -686,6 +714,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
     
       feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
+      */
     }
 
     vTaskDelay(1);
