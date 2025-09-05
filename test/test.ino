@@ -334,7 +334,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
     size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
     prefs.getBytes("peers", peers, size);    //  read peer list
     if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
-    for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + " "; }    //  iterate over peers and add to peerstring
+    for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }    //  iterate over peers and add to peerstring
     free(peers);
 
     //char i[2] = {'0', '\0'}; while (prefs.isKey(i)) {
@@ -349,7 +349,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
                                 
          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
          " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
-         " serv 'mqtt://url'    sets server '" + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "' \n"
+         " serv 'mqtt://url'    sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
          " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
          //" slots 'count'        sets the available slots '" + prefs.getString("slotcount", "4") + "' \n"
 
@@ -399,19 +399,25 @@ void recv( String msg ){    //  this uses string likely char array is better see
   //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
   //                      - requires more nvs reads one for size and one for data
 
-  size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
+    size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
 
-  if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+    if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
 
-  prefs.getBytes("peers", peers, size);    //  read peer list
+    prefs.getBytes("peers", peers, size);    //  read peer list
 
-  strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
+    strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
 
-  //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
-  
-  prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
-  
-  free(peers);    //  free memory for peer list
+    //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
+    
+    prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
+
+    uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+
+    prefs.putBytes( strcat(peers[size/16 + 1], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
+
+    free(peers);    //  free memory for peer list
+
+    feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
 
 
   //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
@@ -523,12 +529,13 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
   WebSerial.begin(&server);    //  init webserial
 
-
   // ------- TODO --------- reinstante this and pass slot count +1 here so user always can add fotos
-  //server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
   //server.on("/queryPeers", HTTP_GET, [](AsyncWebServerRequest *request) {
-  //  request->send(200, "text/plain", "profile 0 1 2 3 4 5 6 7");    //  send slot list
-  //});
+    //request->send(200, "text/plain",  String( (prefs.getUInt("slots", 0) + 1) ));    //  send current slot count plus one
+
+    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);
+  });
 
 
   server.on("/file", HTTP_POST,
@@ -551,8 +558,12 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       memcpy(rcvbuff + index, data, len);    //  copy data to volatile buffer
     }
     if (final){    //  just save the recieved buffer to nvs
-      prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
+      //prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
+      //feedlog("file saved to " + String(slot));
+      
+      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
       feedlog("file saved to " + String(slot));
+      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
 
       // ------ TODO ------ when prefs.get slotcount < slot then update slotcount to new value
     }
@@ -594,12 +605,44 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
   static char slotcount = prefs.getUChar("slotcount", '8');
 
+  //static size_t size;
+
   //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
+  
+  //static uint32_t perp = 0;
+
   static char currpeer[] = "0";    //  initially peer is local
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
+    
+    /*
+    if (!peers) { 
+      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+    }     //  when no peers allocate memory for peer list
+
     lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
+    
+    perp = ++perp % ((size/16)+2);    //  cycle trough eight slots plus one for current peer
+    if (perp > size/16) {
+      struct showstct show={ "user", 1, strcat(peer[prep], "profile") }; xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
+
+      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+
+    }
+    else {
+      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sslot", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
+
+      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+
+    }
+    */
+
+
+
+
+
 
     slotcount = prefs.getUChar("slotcount", '8');
 
