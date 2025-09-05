@@ -74,7 +74,7 @@
             height: 90vh;
             object-fit: contain;*/
             width: 70vw;
-            maxHeight: 70vh;
+            max-height: 70vh;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -92,7 +92,7 @@
             height: auto;
             object-fit: contain*/
             width: 70vw;
-            maxHeight: 70vh;
+            max-height: 70vh;
             border-radius: 1.5rem;
             background: #fff;
         }
@@ -233,12 +233,14 @@
         initTerminalUI();
         // Image button
         document.getElementById('img-button').addEventListener('click', function() {
+            // Open file chooser immediately for responsiveness (esp. mobile Safari)
             document.getElementById('imgInput').click();
+            // Refresh slots in background (buttons update after image chosen)
+            querySlots();
         });
         document.getElementById('imgInput').addEventListener('change', handleImageFile);
-        
-        // Query peers when the page loads
-        queryPeers();
+        // Prime slots in background so first click is fast
+        querySlots();
     }
     function initCommandHistory() {
         const json = localStorage.history;
@@ -630,13 +632,39 @@
     const region = document.getElementById('region');
     const ditheredOverlay = document.getElementById('ditheredOverlay');
     const peerButtonsContainer = document.getElementById('peerButtonsContainer');
-    // Fixed slot list - change SLOT_COUNT to modify the number of slots
-    const SLOT_COUNT = 8; // Change this value to modify the number of slots (0 to SLOT_COUNT-1)
+    // Dynamic slots obtained from /querySlots. Response returns highest index (e.g. "5" -> 5 4 3 2 1 0 profile)
     let slots = [];
-    for (let i = SLOT_COUNT - 1; i >= 0; i--) {
-        slots.push(i.toString());
+    let slotsLoading = false; // prevent overlapping slot queries
+    function querySlots(){
+        if(slotsLoading) return Promise.resolve();
+        slotsLoading = true;
+        return fetch('/querySlots', { cache: 'no-store' })
+          .then(r => r.text())
+          .then(t => {
+            const maxSlot = parseInt(t.trim(), 10);
+            if(!Number.isFinite(maxSlot) || maxSlot < 0 || maxSlot > 512) {
+              throw new Error('invalid slot value: ' + t);
+            }
+            const newSlots = [];
+            // 1-based indexing: include maxSlot down to 1 (exclude 0)
+            for(let i = maxSlot; i >= 1; i--) newSlots.push(i.toString());
+            newSlots.push('profile');
+            slots = newSlots;
+            console.log('Slots updated:', slots.join(' '));
+          })
+          .catch(err => {
+            console.error('Failed to query slots; using fallback 7..0 + profile', err);
+            const fallback = [];
+            // Fallback also 1-based (7..1)
+            for(let i = 7; i >= 1; i--) fallback.push(i.toString());
+            fallback.push('profile');
+            slots = fallback;
+          })
+          .finally(() => {
+            slotsLoading = false;
+            if(imgOverlayBg.style.display === 'flex') createSlotButtons();
+          });
     }
-    slots.push('profile'); // Add profile button at the end
     
     let dragging = false, resizing = false, startX, startY, startLeft, startTop, startWidth, startHeight;
     let regionData = {left: 50, top: 50, width: 200, height: 150}; // default 4:3
@@ -645,6 +673,9 @@
     
     // Function to create slot buttons
     function createSlotButtons() {
+        if(slots.length === 0){
+            return; // waiting for background querySlots
+        }
         peerButtonsContainer.innerHTML = '';
         slots.forEach(slot => {
             const button = document.createElement('button');

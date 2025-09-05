@@ -563,7 +563,10 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       
       prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
       feedlog("file saved to " + String(slot));
-      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
+      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
+        prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
+        feedlog("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
+      }
 
       // ------ TODO ------ when prefs.get slotcount < slot then update slotcount to new value
     }
