@@ -187,9 +187,12 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     
     feedlog("got message start decoding");    //  TODO make this debug
     //char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
-    static uint32_t index = 0;
 
-    uint8_t retry = 0; 
+    static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
+
+    static uint32_t index;    //  static initialises to zero also remember last successful peer index
+
+    uint8_t retry = 1;    //  allow retry for every call
 
     // ------------ TODO -----------
     //  optimization possibly  reload peer list only after we tried all peers and found no sender
@@ -199,7 +202,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //char peercount = prefs.getUChar("peercount");
     static size_t size;    //  this is size of the peer list to calculate the count of peers
 
-    uint8_t rcvhkdf[32];
+    static uint8_t rcvhkdf[32];    //  try message with previous successful peer first
     uint8_t iv[12];  memcpy(iv, payload, 12);
     uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
     static uint8_t rcvcyphy[15000];    //  this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
@@ -208,19 +211,21 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     feedlog("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
     //while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
-    while ( !retry || index ) {    //  iterate over all peers to find whos sender  index zero means no sender found so reload peer list
+    while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
       //peer[0]++;    //  peer initialises to '0hkdf' so just increment pos 0 here
 
-      index = ++index % ((size/16) + 1);
-
-      if (!retry && !index) {    //  reload peer list when no sender found after trying all peers and reset index to try once again
+      if (!index) {    //  reload peer list when no sender found after trying all peers
+    
         //reload peer list
-        retry = index = 1;
+        size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
+        if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+    
+        retry=0;    //  just one retry per message otherwise infinite loop
       }
 
 
 
-      prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf into buffer
+      //prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf into buffer
 
       memcpy(rcvcyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
 
@@ -228,7 +233,11 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       chachapoly.setKey(rcvhkdf, 32);                             feedlog(" set key");
       chachapoly.decrypt(rcvcyphy, rcvcyphy, 15000);                 feedlog(" decrypted cypher text");
 
-      if (!chachapoly.checkTag(rcvtag, 16)) continue;    //  when check tag fails retry with next peer
+      if (!chachapoly.checkTag(rcvtag, 16)) {
+        index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
+        prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf
+        continue;    //  retry
+      }
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
         prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
@@ -628,7 +637,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
 
     if (!peers) {
-      slots = prefs.getUInt("slots", 0);
+      slots = prefs.getUInt("slots", 0);    //  reload slot count for first press after timeout
 
       size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
       if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
