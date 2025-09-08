@@ -169,11 +169,10 @@ void servoTas(void *parameter) {    //  this handles servo movement
 
 TaskHandle_t sendmqttHandle;
 QueueHandle_t sendmqttQueue;
-struct sendstct { char peer[16]; char load[16]; };    //  comented so no redfinition error
+struct sendstct { char peer[16]; char load[16]; };
 
 void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
-  
   sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
 
   PsychicMqttClient mqttClient;
@@ -187,8 +186,19 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     if ( !memcmp(curriv, payload, 12) ) return;    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
     
     feedlog("got message start decoding");    //  TODO make this debug
-    char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
-    char peercount = prefs.getUChar("peercount");
+    //char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
+    static uint32_t index = 0;
+
+    uint8_t retry = 0; 
+
+    // ------------ TODO -----------
+    //  optimization possibly  reload peer list only after we tried all peers and found no sender
+    //                         remember last successful peer and try that first
+    //                         both of the above dont neccessarily make sense together !!
+    
+    //char peercount = prefs.getUChar("peercount");
+    static size_t size;    //  this is size of the peer list to calculate the count of peers
+
     uint8_t rcvhkdf[32];
     uint8_t iv[12];  memcpy(iv, payload, 12);
     uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
@@ -197,8 +207,18 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
     feedlog("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
-    while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
-      peer[0]++;    //  peer initialises to '0hkdf' sojust increment pos 0 here
+    //while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
+    while ( !retry || index ) {    //  iterate over all peers to find whos sender  index zero means no sender found so reload peer list
+      //peer[0]++;    //  peer initialises to '0hkdf' so just increment pos 0 here
+
+      index = ++index % ((size/16) + 1);
+
+      if (!retry && !index) {    //  reload peer list when no sender found after trying all peers and reset index to try once again
+        //reload peer list
+        retry = index = 1;
+      }
+
+
 
       prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf into buffer
 
@@ -250,7 +270,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       if (!prefs.getBytes( send.load, sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
 
       if ( !(send.peer[0]-'0') ) {    //  local is "0" so falsy
-         prefs.putBytes( "0latest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
+         prefs.putBytes( "locallatest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
       }
 
       if ( send.peer[0]-'0' ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
@@ -531,7 +551,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 
 
   server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
-    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);
+    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
   });
 
 
@@ -558,14 +578,12 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       //prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
       //feedlog("file saved to " + String(slot));
       
-      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
+      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
       feedlog("file saved to " + String(slot));
       if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
         prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
         feedlog("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
       }
-
-      // ------ TODO ------ when prefs.get slotcount < slot then update slotcount to new value
     }
   });
 
@@ -582,20 +600,8 @@ TaskHandle_t flanksTasHandle;
 void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
 //void initflanks(){
 
-
-
-//  ---------------   TODO -------------- !!!!!!!!!!!    stop this ascii enumeration and switch to normal integers!!!!
-
-
-
-
   //static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
   static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT);
-
-  //  ----------- TODO ------------- 
-  //
-  // this does not register the timeout correctly for even count of presses so two presses wont trigger the timout!
-  // so stop the time yourself between timeouts!
 
   InterruptButton::setMode(Mode_Synchronous);    // defaults to async wich executes immediate like an ISR, Synchronuse has to have a loop, hybrid does up/down events async and rest synchronous
   //InterruptButton::setMode(Mode_Hybrid);
@@ -604,16 +610,17 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
   //static char slotcount = prefs.getUChar("slotcount", '8');
-  static char slots = prefs.getUInt("slots", 0);
+  //static char slots = prefs.getUInt("slots", 0);
+  static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count
 
-  static size_t size;
+  static size_t size;    //  size of peer list this is to clac peer count
 
   static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
 
   //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   //static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
 
-  static uint32_t prep = slots;
+  static uint32_t prep = slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
 
   //static char currpeer[] = "0";    //  initially peer is local
   static uint32_t currpeer = 0;    //  initially peer is local
@@ -623,20 +630,20 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     if (!peers) {
       slots = prefs.getUInt("slots", 0);
 
-      size_t size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
+      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
       if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
     }     //  when no peers allocate memory for peer list
 
     lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
 
-    prep = ++prep % (slots+1);    //  cycle trough eight slots plus one for current peer
+    prep = ++prep % (slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
 
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
     }
-    else {
+    else {    //  for non zero show foto slot
       struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%u", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
 
       feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
@@ -679,7 +686,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
         struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
       }
       //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
-      prep = slotcount;
+      prep = slots;
       free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
       vTaskDelay(500);    //  wait some time to let send finish and then show
