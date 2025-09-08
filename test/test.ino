@@ -216,10 +216,15 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       if (!index) {    //  reload peer list when no sender found after trying all peers
     
-        //reload peer list
-        size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
-        if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
-    
+        //reload peer list    peers[16][] =  {{"peer0"},{"peer1"},{"peer2"},{} ... }
+        //free(peers); peers = NULL;    //  free memory for peer list and set pointer to null so malloc works
+        //size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
+        //if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+
+        size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
+        if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
+
+        prefs.getBytes("peers", peers, size);    //  read peer list into memory
         retry=0;    //  just one retry per message otherwise infinite loop
       }
 
@@ -235,12 +240,13 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       if (!chachapoly.checkTag(rcvtag, 16)) {
         index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
-        prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf
+        prefs.getBytes(peers[index], rcvhkdf, 32);    //  read incremented peer hkdf
         continue;    //  retry
       }
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-        prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
+        //prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
+        prefs.getBytes( strcat( peers[index], "profile" ), temp, 15000);    //  this permanently adds 'profile' 
 
         feedlog("first decryption successfull");
 
@@ -641,6 +647,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
       size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
       if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+      prefs.getBytes("peers", peers, size);    //  read peer list into memory
     }     //  when no peers allocate memory for peer list
 
     lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
