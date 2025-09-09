@@ -183,6 +183,21 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
+    
+    
+    //  ------------ TODO -----------
+    //  instead of filtering echos with curriv here perhaps add currive as mqtt topic and unsub from this topiv until next send
+    //  potential issue is unsbub may takes some time
+    //                  how would i resub
+    //  this does not seem to be a good solution
+    //
+    //  i really want to avoid setting a permanent sender id so the conversation stays anonymous
+    //
+    //  perhaps collect ivs in a black-list and filter with this
+    //    seems wastefull and also time consuming
+
+    
+    
     if ( !memcmp(curriv, payload, 12) ) return;    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
     
     feedlog("got message start decoding");    //  TODO make this debug
