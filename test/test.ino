@@ -246,24 +246,26 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
         //prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
-        prefs.getBytes( strcat( peers[index], "profile" ), temp, 15000);    //  this permanently adds 'profile' 
+        //prefs.getBytes( strcat( peers[index], "profile" ), temp, 15000);    //  this permanently adds 'profile' 
+        sprintf(peers[0], "%sprofile", peers[index]); prefs.getBytes( peers[0], temp, 15000 );    //  use peer zero as scratch buffer here to read the profile of peer wich is at 'index+profile'
 
         feedlog("first decryption successfull");
 
-        if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( peer, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'index+profile' see abouve
+        if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'index+profile' see abouve
 
-        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peer); strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peers[index]); strcpy(show.nvsalias, peers[index]); xQueueSend(showQueue, &show, 0);    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
 
         xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
         //prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
-        prefs.putBytes( strcpy(&peer[1], "latest"), rcvcyphy, 15000 );    //  save foto of peer wich is 'index+latest'
+        //prefs.putBytes( strcpy(&peer[1], "latest"), rcvcyphy, 15000 );    //  save foto of peer wich is 'index+latest'
+        sprintf(peers[0], "%slatest", peers[index]); prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  use peer zero as scratch buffer here to save foto of peer wich is 'index+latest'
         
         feedlog("second decryption successfull");
-
-        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peer); strcpy(show.nvsalias, peer); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
+        
+        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peers[index]); strcpy(show.nvsalias, peers[index]); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
       }
 
       chachapoly.clear(); return;    //  exit lambda
@@ -284,11 +286,13 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       if (!prefs.getBytes( send.load, sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
 
-      if ( !(send.peer[0]-'0') ) {    //  local is "0" so falsy
-         prefs.putBytes( "locallatest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
+      //if ( !(send.peer[0]-'0') ) {    //  local is "0" so falsy
+      if ( !strcmp(send.peer, "local") ) {    //  when recipient local just save to local latest
+        prefs.putBytes( "locallatest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
       }
 
-      if ( send.peer[0]-'0' ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      //if ( send.peer[0]-'0' ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
+      else {        //  here when recipient not local actually do send stuff
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
@@ -436,7 +440,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
     size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
 
-    if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+    if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
 
     prefs.getBytes("peers", peers, size);    //  read peer list
 
@@ -646,7 +650,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       slots = prefs.getUInt("slots", 0);    //  reload slot count for first press after timeout
 
       size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
-      if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
       prefs.getBytes("peers", peers, size);    //  read peer list into memory
     }     //  when no peers allocate memory for peer list
 
