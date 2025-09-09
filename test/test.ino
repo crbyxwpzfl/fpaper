@@ -191,10 +191,12 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //                  how would i resub
     //  this does not seem to be a good solution
     //
-    //  i really want to avoid setting a permanent sender id so the conversation stays anonymous
+    //  i really want to avoid setting a permanent sender id so the conversation stays anonymous yes server has id but every other client does not get this id
     //
     //  perhaps collect ivs in a black-list and filter with this
     //    seems wastefull and also time consuming
+    //
+    //  also the curriv method is racey when sending multiple messages in a short time
 
     
     
