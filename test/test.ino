@@ -239,7 +239,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       chachapoly.decrypt(rcvcyphy, rcvcyphy, 15000);                 feedlog(" decrypted cypher text");
 
       if (!chachapoly.checkTag(rcvtag, 16)) {
-        index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
+        //index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
+        index = ++index % (size/16);    //  when decryption fails increment peer
         prefs.getBytes(peers[index], rcvhkdf, 32);    //  read incremented peer hkdf
         continue;    //  retry
       }
@@ -319,7 +320,10 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       }
 
     }
-    vTaskDelay(4000);    // just send every two second so we have enugh time to filter out our echos with curriv   // TODO change this back to two seconds
+    vTaskDelay(1);    // just send every two second so we have enugh time to filter out our echos with curriv
+                      // TODO change this back to two seconds
+                      // but with a larege delay local sends do not get processed fast enough and when user send sth to himself alias cahnges his lates foto
+                      //  then the show task is executed first and shows the old latest foto instead of the new one
   }
 }
 
@@ -452,7 +456,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
     uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
 
-    prefs.putBytes( strcat(peers[size/16 + 1], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
+    prefs.putBytes( strcat(peers[size/16], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
 
     free(peers);    //  free memory for peer list
 
@@ -642,7 +646,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   static uint32_t prep = slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
 
   //static char currpeer[] = "0";    //  initially peer is local
-  static uint32_t currpeer = 0;    //  initially peer is local
+  static uint32_t currpeer;    //  initially peer is local static initialises to zero
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
 
@@ -698,7 +702,8 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       lastpress = 0;    //  disarm this until real press
 
       if (!prep) {    //  when prep is a peer
-        currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
+        //currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
+        currpeer = ++currpeer % (size/16);    //  advance peer or wrap
         struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
       }
       else {    //  when perep is a foto slot
@@ -706,13 +711,15 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
         struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
       }
       //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
-      prep = slots;
-      free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
-      vTaskDelay(500);    //  wait some time to let send finish and then show
+      vTaskDelay(1);    //  wait some time to let send finish and then show
       // TODO this comes to fast so dely this some how or move this line into send task
       struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
     
+
+      prep = slots;
+      free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
+
       feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
 
 
