@@ -247,6 +247,13 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
     //for (uint8_t attempts = 0; attempts < (size/16 - 1); attempts++) {    //  iterate over all peers to find whos sender
     for (uint8_t attempts = 1; attempts < (size/16) + 1; attempts++) {    //  iterate over all peers to find whos sender
+    for (uint8_t attempts = (size/16); attempts; attempts--) {       // a =  4, 3, 2, 1
+                                                                   // key =  x, 3, 2, 1
+    
+    //for (uint8_t attempts = 0; attempts < (size/16); attempts++) { // a  = 0, 1, 2, 3
+                                                                    // key = x, 0, 1, 2 
+                                                               // (new)key = x, x, 1, 2
+                                                            // (newnew)key = x, 1, 2, 3
       
     // ----------- TODO ----------- this for loop and the on failure handleing have to be rethought! perhaps do stuff on success instead and revise the logic
       
@@ -282,10 +289,18 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         //index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
         //index = ++index % (size/16);    //  when decryption fails increment peer
         //index++; if (index > (size/16) - 1) index = 1;    //  when decryption fails increment peer
-      
-        index = attempts;
 
-        if ( index < (size/16) ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  only read incremented peer hkdf for valid indices
+        //if(!attempts) index = 1;
+        //else index = attempts +1;
+
+        //index = (attempts) ? attempts+1 : 1;
+
+        index = attempts -1;
+
+        //index = attempts;
+
+        //if ( index < (size/16) ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  only read incremented peer hkdf for valid indices
+        if ( index ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  read next peer hkdf.  when no peer matches this keeps first peer hkdf in memory but whatevs
         continue;    //  retry
       }
       
@@ -679,6 +694,7 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
       feedlog("file saved to " + String(slot));
       if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
         prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
+        xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots
         feedlog("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
       }
     }
