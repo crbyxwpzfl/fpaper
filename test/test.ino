@@ -186,6 +186,14 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   //static bool seenecho;    //  otherwise echo rejection is racey  todo rewrite this with proper portMUX and a ring with timestaps to allow multiple messages and invalidate old ivs currently this only allows one message and waits for its echo
 
+
+  static size_t size = prefs.getBytesLength("peers");    //  size of peer list this is to clac peer count
+
+  static char (*peers)[16] = (char (*)[16]) malloc( size );    //  allocate memory for peer list
+
+  prefs.getBytes("peers", peers, size);    //  read peer list into memory
+
+
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     
 
@@ -206,18 +214,18 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     // ZERO CURRIV HERE!! does this even make sense? null iv still is a valid iv i guess so is as likely as any other iv
     //if ( !memcmp(curriv, payload, 12) ) { seenecho = true; memcpy( curriv, NULL) return;}    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
     
-    // this still is racey 
+
     if ( !memcmp(curriv, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
 
 
     feedlog("got message start decoding");    //  TODO make this debug
     //char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
 
-    static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
+    //static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
 
     static uint32_t index;    //  static initialises to zero also remember last successful peer index
 
-    uint8_t retry = 1;    //  allow retry for every call
+    //uint8_t retry = 1;    //  allow retry for every call
 
     // ------------ TODO -----------
     //  optimization possibly  reload peer list only after we tried all peers and found no sender
@@ -225,9 +233,9 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //                         both of the above dont neccessarily make sense together !!
     
     //char peercount = prefs.getUChar("peercount");
-    static size_t size;    //  this is size of the peer list to calculate the count of peers
+    //static size_t size;    //  this is size of the peer list to calculate the count of peers
 
-    static uint8_t rcvhkdf[32];    //  try message with previous successful peer first
+    static uint8_t rcvhkdf[32];    //  static to try message with previous successful peer first but this also cuases decryption to fail at first call
     uint8_t iv[12];  memcpy(iv, payload, 12);
     uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
     static uint8_t rcvcyphy[15000];    //  this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
@@ -236,9 +244,16 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     feedlog("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
     //while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
-    while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
+    //while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
+    //for (uint8_t attempts = 0; attempts < (size/16 - 1); attempts++) {    //  iterate over all peers to find whos sender
+    for (uint8_t attempts = 1; attempts < (size/16) + 1; attempts++) {    //  iterate over all peers to find whos sender
+      
+    // ----------- TODO ----------- this for loop and the on failure handleing have to be rethought! perhaps do stuff on success instead and revise the logic
+      
+      
       //peer[0]++;    //  peer initialises to '0hkdf' so just increment pos 0 here
 
+      /*
       if (!index) {    //  reload peer list when no sender found after trying all peers
     
         //reload peer list    peers[16][] =  {{"peer0"},{"peer1"},{"peer2"},{} ... }
@@ -252,7 +267,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         prefs.getBytes("peers", peers, size);    //  read peer list into memory
         retry=0;    //  just one retry per message otherwise infinite loop
       }
-
+      */
 
 
       //prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf into buffer
@@ -265,8 +280,12 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
       if (!chachapoly.checkTag(rcvtag, 16)) {
         //index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
-        index = ++index % (size/16);    //  when decryption fails increment peer
-        prefs.getBytes(peers[index], rcvhkdf, 32);    //  read incremented peer hkdf
+        //index = ++index % (size/16);    //  when decryption fails increment peer
+        //index++; if (index > (size/16) - 1) index = 1;    //  when decryption fails increment peer
+      
+        index = attempts;
+
+        if ( index < (size/16) ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  only read incremented peer hkdf for valid indices
         continue;    //  retry
       }
       
@@ -305,6 +324,22 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   uint8_t sendtag[16];
 
   while (true) {
+
+    if ( ulTaskNotifyTake(pdTrue, 0) ) { //reload peer list when notified by other tasks
+      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
+
+      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
+
+      prefs.getBytes("peers", peers, size);    //  read peer list into memory
+
+
+      // ---------- TODO -------------
+      //  also load all hkdfs into memory for decryption in .ontopic here this would be faster but also use more memory
+    }
+
+
+
     //if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
     if(!uxQueueMessagesWaiting( sendmqttQueue )){    //  just do sth when queue not empty
 
@@ -499,6 +534,9 @@ void recv( String msg ){    //  this uses string likely char array is better see
     feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
 
 
+    xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
+    xTaskNotifyGive(flanksTasHandle);
+
   //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
   //                        then convert to key (char array) with sprintf(buffer, "%u", number);    //  this gives a char array with the number in it to use as key
   //char peerindexchar[10];
@@ -672,9 +710,12 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   //static char slots = prefs.getUInt("slots", 0);
   static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count
 
-  static size_t size;    //  size of peer list this is to clac peer count
+  static size_t size = prefs.getBytesLength("peers");    //  size of peer list this is to clac peer count
 
-  static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
+  //static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
+  static char (*peers)[16] = (char (*)[16]) malloc( size );    //  allocate memory for peer list
+
+  prefs.getBytes("peers", peers, size);    //  read peer list into memory
 
   //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
   //static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
@@ -686,6 +727,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
 
+    /*
     if (!peers) {
       slots = prefs.getUInt("slots", 0);    //  reload slot count for first press after timeout
 
@@ -693,6 +735,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
       prefs.getBytes("peers", peers, size);    //  read peer list into memory
     }     //  when no peers allocate memory for peer list
+    */
 
     lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
 
@@ -733,6 +776,16 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
+
+    if ( ulTaskNotifyTake(pdTrue, 0) ) { //reload peer list when notified by other tasks
+      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
+      slots = prefs.getUInt("slots", 0);    //  reload slot count
+
+      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
+
+      prefs.getBytes("peers", peers, size);    //  read peer list into memory
+    }
     
     if ( lastpress && (millis() - lastpress > 2000)) {    //  when no press for two seconds actually do the stuff here
       lastpress = 0;    //  disarm this until real press
@@ -754,7 +807,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     
 
       prep = slots;
-      free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
+      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
       feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
 
