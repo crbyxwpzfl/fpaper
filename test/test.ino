@@ -76,7 +76,8 @@ void showTas(void *parameter) {    //  this handles the epaper
   char ocupado[5];    //  save the screen state either user or empty
 
   while(true){
-    if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
+    //if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
+    if (!uxQueueMessagesWaiting( showQueue )){
       showstct show; xQueueReceive(showQueue, &show, 0);
 
       if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(showQueue, &show, 0); continue;
@@ -156,7 +157,8 @@ void servoTas(void *parameter) {    //  this handles servo movement
   char buff[] = "sit";    //  why does char buf[4] error help
   
   while(true){
-    if(!xQueueIsQueueEmptyFromISR( servoQueue )){
+    //if(!xQueueIsQueueEmptyFromISR( servoQueue )){
+    if(!uxQueueMessagesWaiting( servoQueue )){
       xQueueReceive(servoQueue, &buff, 0);    //  just do sth when queue not empty
       //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
       if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
@@ -182,9 +184,11 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
+  //static bool seenecho;    //  otherwise echo rejection is racey  todo rewrite this with proper portMUX and a ring with timestaps to allow multiple messages and invalidate old ivs currently this only allows one message and waits for its echo
+
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
     
-    
+
     //  ------------ TODO -----------
     //  instead of filtering echos with curriv here perhaps add currive as mqtt topic and unsub from this topiv until next send
     //  potential issue is unsbub may takes some time
@@ -198,10 +202,14 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //
     //  also the curriv method is racey when sending multiple messages in a short time
 
+
+    // ZERO CURRIV HERE!! does this even make sense? null iv still is a valid iv i guess so is as likely as any other iv
+    //if ( !memcmp(curriv, payload, 12) ) { seenecho = true; memcpy( curriv, NULL) return;}    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
     
-    
-    if ( !memcmp(curriv, payload, 12) ) return;    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
-    
+    // this still is racey 
+    if ( !memcmp(curriv, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
+
+
     feedlog("got message start decoding");    //  TODO make this debug
     //char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
 
@@ -297,7 +305,12 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
   uint8_t sendtag[16];
 
   while (true) {
-    if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
+    //if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
+    if(!uxQueueMessagesWaiting( sendmqttQueue )){    //  just do sth when queue not empty
+
+
+      //if (!seenecho) { feedlog("no wait for echo"); continue;}    //  do not pop queue when last messages echo was not seen do not push back into queue to preserved sequence   // optimization this technicaly doe not have to wait on local sends
+
       sendstct send; xQueueReceive(sendmqttQueue, &send, 0);    //  reads first word out of queue
 
       Serial.println("sending to " + String(send.peer));
@@ -314,6 +327,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy) + 9);    //  allocate memory for payload
       
         esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
+        //seenecho = false;    //  reset echo flag
 
         prefs.getBytes( strcat(send.peer, "hkdf") , sendhkdf, 32);    //  find the peer hkdf
 
@@ -334,6 +348,11 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         mqttClient.publish( prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
         free(payload);
+
+
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { feedlog("seen echo or timeout over\n"); }    //  this releases the task until notivied or timeout runs out
+        else { feedlog("timeout waiting for echo\n"); }    //  TODO make this a debug log
+
       }
 
     }
