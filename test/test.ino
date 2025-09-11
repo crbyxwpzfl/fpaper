@@ -58,10 +58,23 @@
 
 Preferences prefs;    //  first declaration of preferences as perfs
 
+TaskHandle_t flanksTasHandle;
+
+
+// ----------- TODO -----------
+//
+//  -> combine feedlog() + recv() + tryair() + watermarktask() + WebSerialInitialization into one task
+//     ( auto updateds via tryair() can be done here too )
+//
+//  -> give wifi its own task including and dnsservtas()
+//     eitehr keep it running while ap mode for dnsservtas() or suspend it when not in ap mode
+//
+
+
+
 TaskHandle_t showTasHandle;
 QueueHandle_t showQueue;
 struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };    //  handle and struct for show queue
-
 void showTas(void *parameter) {    //  this handles the epaper
   showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5
 
@@ -131,11 +144,13 @@ void showTas(void *parameter) {    //  this handles the epaper
 
       display.hibernate();   //  hibernate display to save power
     }
-    vTaskDelay(1);    //  befor one second so no flicker just show every thing fast user interactions
-
+    //vTaskDelay(1);    //  befor one second so no flicker just show every thing fast user interactions
+    taskYIELD();    //  more efficent vTaskDely(0)
 
   }
 }
+
+
 
 
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
@@ -146,6 +161,8 @@ void feedlog(String text, String level = "info") {    //  print to serial and we
     WebSerial.print(text.c_str()); 
   }    //  always print info and just debug when debug level
 }
+
+
 
 
 //Preferences prefs;    //  commented so no redfinition error
@@ -164,15 +181,17 @@ void servoTas(void *parameter) {    //  this handles servo movement
       if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
       if (!strcmp(buff, "sit")) { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
     }
-    vTaskDelay(1);
+    //vTaskDelay(1);
+    taskYIELD();
   }
 }
+
+
 
 
 TaskHandle_t sendmqttHandle;
 QueueHandle_t sendmqttQueue;
 struct sendstct { char peer[16]; char load[16]; };
-
 void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
@@ -246,16 +265,16 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
     //while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
     //while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
     //for (uint8_t attempts = 0; attempts < (size/16 - 1); attempts++) {    //  iterate over all peers to find whos sender
-    for (uint8_t attempts = 1; attempts < (size/16) + 1; attempts++) {    //  iterate over all peers to find whos sender
+    //for (uint8_t attempts = 1; attempts < (size/16) + 1; attempts++) {    //  iterate over all peers to find whos sender
     for (uint8_t attempts = (size/16); attempts; attempts--) {       // a =  4, 3, 2, 1
                                                                    // key =  x, 3, 2, 1
     
-    //for (uint8_t attempts = 0; attempts < (size/16); attempts++) { // a  = 0, 1, 2, 3
+      //for (uint8_t attempts = 0; attempts < (size/16); attempts++) { // a  = 0, 1, 2, 3
                                                                     // key = x, 0, 1, 2 
                                                                // (new)key = x, x, 1, 2
                                                             // (newnew)key = x, 1, 2, 3
       
-    // ----------- TODO ----------- this for loop and the on failure handleing have to be rethought! perhaps do stuff on success instead and revise the logic
+      // ----------- TODO ----------- this for loop and the on failure handleing have to be rethought! perhaps do stuff on success instead and revise the logic
       
       
       //peer[0]++;    //  peer initialises to '0hkdf' so just increment pos 0 here
@@ -340,7 +359,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   while (true) {
 
-    if ( ulTaskNotifyTake(pdTrue, 0) ) { //reload peer list when notified by other tasks
+    if ( ulTaskNotifyTake(pdTRUE, 0) ) { //reload peer list when notified by other tasks
       //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
       size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
@@ -406,12 +425,16 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       }
 
     }
-    vTaskDelay(1);    // just send every two second so we have enugh time to filter out our echos with curriv
+    taskYIELD();
+    //vTaskDelay(1);    // just send every two second so we have enugh time to filter out our echos with curriv
                       // TODO change this back to two seconds
                       // but with a larege delay local sends do not get processed fast enough and when user send sth to himself alias cahnges his lates foto
                       //  then the show task is executed first and shows the old latest foto instead of the new one
   }
 }
+
+
+
 
 TaskHandle_t dnsServHandle;
 void dnsServTas(void *parameter) {    //  this is the dns response task this only is called in ap mode
@@ -420,9 +443,12 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
   while(true){
     dnsServer.processNextRequest();
     feedlog("dns for ap mode", "debug");
-    vTaskDelay(10);
+    //vTaskDelay(10);
+    taskYIELD();
   }
 }
+
+
 
 
 void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
@@ -444,6 +470,8 @@ void tryair(String airlink) {    //  this works with redirects and insecure http
 }
 
 
+
+
 TaskHandle_t watermarkHandle;
 void printWatermarkTas(void *count){
   int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
@@ -454,6 +482,8 @@ void printWatermarkTas(void *count){
   feedlog("\n\n");
   vTaskDelete(watermarkHandle);
 }
+
+
 
 
 void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
@@ -643,6 +673,8 @@ void recv( String msg ){    //  this uses string likely char array is better see
 }
 
 
+
+
 AsyncWebServer server(80);
 void initWebSerial() {    //  either spwan ap or connect to wlan and init webserial
   WiFi.mode(WIFI_STA);
@@ -709,7 +741,9 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
 }
 
 
-TaskHandle_t flanksTasHandle;
+
+
+//TaskHandle_t flanksTasHandle;
 void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
 //void initflanks(){
 
@@ -793,7 +827,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
 
-    if ( ulTaskNotifyTake(pdTrue, 0) ) { //reload peer list when notified by other tasks
+    if ( ulTaskNotifyTake(pdTRUE, 0) ) { //reload peer list when notified by other tasks
       //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
       slots = prefs.getUInt("slots", 0);    //  reload slot count
 
@@ -817,7 +851,8 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       }
       //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
 
-      vTaskDelay(1);    //  wait some time to let send finish and then show
+      //vTaskDelay(1);    //  wait some time to let send finish and then show
+
       // TODO this comes to fast so dely this some how or move this line into send task
       struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
     
@@ -826,15 +861,6 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
       feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
-
-
-
-
-
-
-
-
-
 
       /*
       if (prep[0] > slotcount ) {    //  when prep is a peer
@@ -856,7 +882,8 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       */
     }
 
-    vTaskDelay(1);
+    //vTaskDelay(1);
+    taskYIELD();
   }
 
       //   ------- TODO ---------
@@ -866,6 +893,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       //   test if this (event key press) resets for multible key presses or if this fires multible times
       //   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
 }
+
 
 
 
@@ -903,4 +931,7 @@ void setup() {    //  when this int main() instead this does not compile
   //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 }
 
-void loop() {vTaskDelay(pdMS_TO_TICKS(1000));}
+
+
+
+void loop() {vTaskSuspend(NULL);}    //  all done in tasks so suspend loop

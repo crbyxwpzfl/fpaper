@@ -8,8 +8,6 @@ todo - replace strcat(test, "appendix") with strcpy(&test[index], "appendix") st
 
 todo - combine wifi, webserial, dns into one task
 
-todo - make website ask for slot count
-
 todo - stop using arduino Strings hopfully this is not just esoteric
 
 todo - how do you feel about auto updates
