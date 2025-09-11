@@ -14,7 +14,11 @@ todo - how do you feel about auto updates
 
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
 
-planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib 
+todo - read as much prefs stuff into memory instead of constantly hitting nvs
+
+planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
+
+vision - replace prefs. reads and puts with perhpas rtos message buffers for thread safety
 
 vision - forward secrecy and somthing like diffi hellman/newhope/kyber
 

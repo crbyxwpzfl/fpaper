@@ -71,6 +71,26 @@ TaskHandle_t flanksTasHandle;
 //
 
 
+TaskHandle_t networkTasHandle;
+void networkTas(void *parameter) {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  not able to connect to ssid from nvs so fall back to ap
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("fpaper", "");
+    feedlog(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
+    xTaskCreate( dnsServTas, "dnsServ", 2048, NULL, 1, &dnsServHandle );    //  begin dns serv 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
+  }
+  if (WiFi.waitForConnectResult() == WL_CONNECTED) {    //  all good connected to ssid from nvs
+    feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
+  }
+
+  while () {
+    
+  }
+}
+
+
 
 TaskHandle_t showTasHandle;
 QueueHandle_t showQueue;
