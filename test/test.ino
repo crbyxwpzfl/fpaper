@@ -69,26 +69,330 @@ TaskHandle_t flanksTasHandle;
 //  -> give wifi its own task including and dnsservtas()
 //     eitehr keep it running while ap mode for dnsservtas() or suspend it when not in ap mode
 //
-
+//  major restructuring concerens
+//  - correct startup sequence eg wifi has to start first only then webserial and mqtt task can start
+//  - webserial already is async so is it bad to put it into its own task? how do its callbacks behave then?
+//  - same goes for mqtt which is async too
+//
+//  NVS ACCESS IS NOT THREAD SAFE find a solution !! eg semaphore or mutex or seperate task wich sends values back to other tasks 
+//
 
 TaskHandle_t networkTasHandle;
 void networkTas(void *parameter) {
   WiFi.mode(WIFI_STA);
   WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
-  if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  not able to connect to ssid from nvs so fall back to ap
+
+  if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  this waits for a default time and when not able to connect to ssid falls back to ap
     WiFi.mode(WIFI_AP);
     WiFi.softAP("fpaper", "");
     feedlog(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
-    xTaskCreate( dnsServTas, "dnsServ", 2048, NULL, 1, &dnsServHandle );    //  begin dns serv 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
-  }
-  if (WiFi.waitForConnectResult() == WL_CONNECTED) {    //  all good connected to ssid from nvs
+    
+    // Perhaps add mdns here for ap mode too
+    
+  } else {
     feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
+    
+    if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+
+    vTaskDelete(NULL);    //  all done so delete this task
   }
 
-  while () {
-    
+
+  DNSServer dnsServer;
+  dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
+  while(true){
+      dnsServer.processNextRequest();
+      feedlog("dns for ap mode", "debug");
+      //vTaskDelay(10);
+      taskYIELD();
   }
 }
+
+
+
+TaskHandle_t wsTasHandle;
+//  perhpas dont use queue here and instead use xMessageBuffer with callbacks
+void wstas() {
+  WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
+
+  AsyncWebServer server(80);
+
+  WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });    //  attach message callback
+
+  WebSerial.begin(&server);    //  init webserial
+
+
+  server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
+    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
+  });
+
+
+  server.on("/file", HTTP_POST,
+    [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
+    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+    static size_t totalSize = 0;    //  static so this is not reset on each chunck
+    static char slot[12];    // static to persist across chunks this max is 'profile'
+    static uint8_t rcvbuff[15000];    // static buffer allocated once
+
+    if (!index){
+      totalSize = request->header("Content-Length").toInt();
+      strncpy(slot, request->getParam("slot")->value().c_str(), 8);    //  max copy eight chars for 'profile' here
+      feedlog("file is for slot " + String(slot));
+    }
+    if (len + index > sizeof(rcvbuff)) {
+      feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
+    }
+    else if (len) {
+      feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
+      memcpy(rcvbuff + index, data, len);    //  copy data to volatile buffer
+    }
+    if (final){    //  just save the recieved buffer to nvs
+      //prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
+      //feedlog("file saved to " + String(slot));
+      
+      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
+      feedlog("file saved to " + String(slot));
+      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
+        prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
+        xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots
+        feedlog("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
+      }
+    }
+  });
+
+  server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
+    request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
+  });
+  server.begin();
+
+
+  
+
+  //  move this into the other webserial message callback somehow
+  void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
+    WiFiClientSecure secureClient;
+    HTTPUpdate up;
+
+    if( airlink ) {    //  only do this when airlink has value
+      prefs.putString("airlink", "");    //  disable airlink for next boot
+      //String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
+      secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
+      up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
+      up.onStart([]() { feedlog("overwrite firmware init download \n"); });
+      up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
+      up.onError([&up](int err) { feedlog(  up.getLastErrorString() + " \n"); });
+      up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+      HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
+    }
+    feedlog("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
+  }
+
+
+
+
+
+
+  //  integrate this into ws callback or put this into while true loop with queue
+  void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
+    if ( msg.indexOf("help") >= 0 ) {
+      String peerstring = "";
+      
+      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
+      prefs.getBytes("peers", peers, size);    //  read peer list
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+      for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }    //  iterate over peers and add to peerstring
+      free(peers);
+
+      //char i[2] = {'0', '\0'}; while (prefs.isKey(i)) {
+        //peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
+        //i[0]++;
+      //}
+
+      feedlog("\n \n"
+          "\nwhen wlan fails an access point spawns \n"
+          " ssid 'ssid'         sets wlan '" + prefs.getString("ssid", "N.A.") + "' \n"
+          " pass 'password'     sets password \n"
+                                  
+          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
+          " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
+          " serv 'mqtt://url'    sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
+          " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
+          //" slots 'count'        sets the available slots '" + prefs.getString("slotcount", "4") + "' \n"
+
+          "\nservo config. please take finger off before \n"
+          " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
+          " sit  'servo pos'    sets sit pos '"  + prefs.getInt("sit", 0) + "' \n"
+
+          "\nother stuff \n"
+          " help                prints this\n"
+          " info 'seconds'      see some info \n"
+          " publ 'text'         publish to mqtt \n"
+          " debug 'level'       sets debug level '" + prefs.getString("debuglevel", "info") + "' \n"
+          " restart             well this restarts \n"
+          " apt upgrade 'link'  sets firmware url for next restart \n"
+          " rm -rf              chill this just clears preferences\n\n\n" ); return;
+    }
+    //if (msg.indexOf("slots ") == 0) {
+    //  prefs.putString("slotcount", msg.substring(6)); feedlog("'" + msg.substring(6) + "' slots available\n"); return;
+    //}
+    if (msg.indexOf("topic ") == 0) {
+      prefs.putString("mqtop", msg.substring(6)); feedlog("mqtt topic set to '" + msg.substring(6) + "'\n"); return;
+    }
+    if (msg.indexOf("debug ") == 0) {
+      prefs.putString("debuglevel", msg.substring(6)); feedlog("debug level set to '" + msg.substring(6) + "'\n"); return;
+    }
+    if (msg.indexOf("publ ") == 0) {
+      feedlog("this is disabled fix this");
+      //xQueueSend(sendmqttQueue, msg.substring(5).c_str(), 0); return;
+    }
+    if ( msg.indexOf("serv ") == 0 ) {
+      prefs.putString("mqserv", msg.substring(5)); feedlog("mqtt server set to '" + msg.substring(5) + "'\n"); return;
+    }
+
+    // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
+
+    if ( msg.indexOf("peer ") == 0 ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
+
+
+    // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
+    //                        overwrite secret here for already known peers
+
+
+
+
+    //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
+    //                      - but this would add complexety of malloc when ever we have to access the peers
+    //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
+    //                      - requires more nvs reads one for size and one for data
+
+      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
+
+      if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
+
+      prefs.getBytes("peers", peers, size);    //  read peer list
+
+      strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
+
+      //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
+      
+      prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
+
+      uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+
+      prefs.putBytes( strcat(peers[size/16], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
+
+      free(peers);    //  free memory for peer list
+
+      feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
+
+
+      xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
+      xTaskNotifyGive(flanksTasHandle);
+
+    //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
+    //                        then convert to key (char array) with sprintf(buffer, "%u", number);    //  this gives a char array with the number in it to use as key
+    //char peerindexchar[10];
+    //uint32_t peerindexuint = 0;
+
+
+
+
+
+    /*
+      if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
+
+      //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
+
+      char i[] = { prefs.getUChar("peercount", '0') + 1 , '\0'};    //  read current peer count and add one
+      prefs.putUChar("peercount", i[0]);    //  put incremented peer count
+
+      prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
+
+      uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+
+      strcat(i, "hkdf");    //  adds hkdf to peer
+
+      prefs.putBytes(i, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'index + hkdf'
+      feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
+
+      /* -- debug helper to print hkdf result in hex TODO remove this
+      String chachaKeyHex;
+      for (size_t i = 0; i < sizeof(hkdfbuff); i++) {
+        if (hkdfbuff[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
+        chachaKeyHex += String(hkdfbuff[i], HEX);
+        if (i < sizeof(hkdfbuff) - 1) chachaKeyHex += " ";
+      }
+      feedlog("chacha key derived (hex): " + chachaKeyHex + "\n");
+      
+      uint8_t testbuff[32];
+      prefs.getBytes(nvsalias.c_str(), testbuff, sizeof(testbuff));   //  read back hkdf result from nvs to test if it worked
+      String testbuffHex;
+      for (size_t i = 0; i < sizeof(testbuff); i++) {
+        if (testbuff[i] < 0x10) testbuffHex += "0";  // Add leading zero for single digit hex
+        testbuffHex += String(testbuff[i], HEX);
+        if (i < sizeof(testbuff) - 1) testbuffHex += " ";
+      }
+      feedlog("readback derived (hex): " + testbuffHex + "\n");
+      */
+
+    }
+    if ( msg.indexOf("ssid ") == 0 ) {
+      prefs.putString("ssid", msg.substring(5)); feedlog("ssid set to '" + msg.substring(5) + "'\n"); return;
+    }
+    if ( msg.indexOf("pass ") == 0 ) {
+      prefs.putString("pass", msg.substring(5)); feedlog("pass set to '" + msg.substring(5) + "'\n"); return;
+    }
+    if ( msg.indexOf("restart") == 0 ) {
+      feedlog("restarting esp"); ESP.restart(); return;
+    }
+    if ( msg.indexOf("apt upgrade ") == 0 ) {
+      feedlog("'restart' to init upgrade with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
+      //feedlog("firmware link " + msg.substring(12) + " '\n" ); tryair( msg.substring(12) ); return;
+    }
+    if ( msg.indexOf("rm -rf") == 0 ) {
+      prefs.clear(); feedlog("cleared preferences"); return;
+    }
+    if ( msg.indexOf("top ") == 0 ) {
+      prefs.putInt("top", msg.substring(4).toInt()); xQueueSend(servoQueue, "top", 0); feedlog("top angel set to '" + msg.substring(4) + "'\n"); return;
+    }
+    if ( msg.indexOf("sit ") == 0 ) {
+      prefs.putInt("sit", msg.substring(4).toInt()); xQueueSend(servoQueue, "sit", 0); feedlog("sit angle set to '" + msg.substring(4) + "'\n"); return;
+    }
+    if ( msg.indexOf("info") == 0 ) {
+      char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); feedlog(nvsfree);
+      feedlog("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
+      feedlog("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
+      if(WiFi.getMode() == WIFI_MODE_AP) { feedlog("local ip " + WiFi.softAPIP().toString() + " \n"); }
+      if(WiFi.getMode() == WIFI_MODE_STA) { feedlog("local ip " + WiFi.localIP().toString() + " \n"); }
+      char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); feedlog(macStr);    //  this is so tiedious pls help me do not know how to string
+      feedlog("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
+      feedlog("| ---- | --- | -------- | -------- | ---------------- | \n");
+      esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+      if (pi != NULL) {
+        do {
+          const esp_partition_t* p = esp_partition_get(pi);
+            char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); feedlog(buffer);    //  this sucks i hate strings i miss python
+        } while (pi = (esp_partition_next(pi)));
+      }
+      int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
+    }
+    feedlog("recived " + msg + " unknown try 'help' \n");
+  }
+
+
+
+
+
+
+  while (true) {
+    //  process feedlog here
+    //if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
+    //  Serial.print(text);    // TODO add \r\n here so each line is printed correctly
+    //  WebSerial.print(text.c_str());
+    //}
+  }
+}
+
 
 
 
@@ -172,7 +476,7 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 
 
-
+/* moved feedlog() to wstas()
 WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
 //Preferences prefs;    //  commented so no redfinition error
 void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
@@ -181,7 +485,7 @@ void feedlog(String text, String level = "info") {    //  print to serial and we
     WebSerial.print(text.c_str()); 
   }    //  always print info and just debug when debug level
 }
-
+*/
 
 
 
@@ -455,7 +759,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
 
 
-
+/* moved dnsServTas() to network tasks
 TaskHandle_t dnsServHandle;
 void dnsServTas(void *parameter) {    //  this is the dns response task this only is called in ap mode
   DNSServer dnsServer;
@@ -467,10 +771,10 @@ void dnsServTas(void *parameter) {    //  this is the dns response task this onl
     taskYIELD();
   }
 }
+*/
 
 
-
-
+/* moved tryair() to wstas()
 void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
   WiFiClientSecure secureClient;
   HTTPUpdate up;
@@ -488,10 +792,10 @@ void tryair(String airlink) {    //  this works with redirects and insecure http
   }
   feedlog("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
 }
+*/
 
 
-
-
+/* moved watermark to wstas()
 TaskHandle_t watermarkHandle;
 void printWatermarkTas(void *count){
   int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
@@ -502,10 +806,10 @@ void printWatermarkTas(void *count){
   feedlog("\n\n");
   vTaskDelete(watermarkHandle);
 }
+*/
 
 
-
-
+/* moved recv() to wstas()
 void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
   if ( msg.indexOf("help") >= 0 ) {
     String peerstring = "";
@@ -611,7 +915,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
 
 
 
-   /*
+   // ----------------------------
     if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
 
     //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
@@ -646,7 +950,7 @@ void recv( String msg ){    //  this uses string likely char array is better see
       if (i < sizeof(testbuff) - 1) testbuffHex += " ";
     }
     feedlog("readback derived (hex): " + testbuffHex + "\n");
-    */
+    // -----------------------------------
 
   }
   if ( msg.indexOf("ssid ") == 0 ) {
@@ -691,12 +995,14 @@ void recv( String msg ){    //  this uses string likely char array is better see
   }
   feedlog("recived " + msg + " unknown try 'help' \n");
 }
+*/
 
 
-
-
+/* moved initwebserial to wstask()
 AsyncWebServer server(80);
 void initWebSerial() {    //  either spwan ap or connect to wlan and init webserial
+  
+  //----------- moved to its own task ------------
   WiFi.mode(WIFI_STA);
   WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  not able to connect to ssid from nvs so fall back to ap
@@ -708,6 +1014,8 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
   if (WiFi.waitForConnectResult() == WL_CONNECTED) {    //  all good connected to ssid from nvs
     feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
   }
+  // ----------------------
+
 
   WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });    //  attach message callback
 
@@ -757,9 +1065,10 @@ void initWebSerial() {    //  either spwan ap or connect to wlan and init webser
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
   server.begin();
-  if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
-}
 
+  //if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+}
+*/
 
 
 
@@ -921,11 +1230,13 @@ void setup() {    //  when this int main() instead this does not compile
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
+  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to handle all network related stuff
+
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
 
-  initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
+  //initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
 
-  tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
+  //tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
 
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
 
