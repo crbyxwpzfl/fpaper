@@ -4,6 +4,10 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+todo - perhaps pass prefs task/queue handles as parameters
+
+todo - store hkdfs in one list instead of with names
+
 todo - replace strcat(test, "appendix") with strcpy(&test[index], "appendix") strcpy should be faster and we usually know index
 
 todo - combine wifi, webserial, dns into one task
