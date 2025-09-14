@@ -56,6 +56,9 @@
 #include <xpwallpaper.h>  //  test image bitmap
 
 
+
+
+
 Preferences prefs;    //  first declaration of preferences as perfs
 
 TaskHandle_t flanksTasHandle;
@@ -131,13 +134,13 @@ void wstas() {
   AsyncWebServer server(80);
 
   ws.onMessage([&ws](const std::string& stdstr) { //recv(msg.c_str());
-    const char *cstr = stdstr.c_str();
+    const char *cstr = stdstr.c_str();    //  this is for .putString and for ws.print this feels wrong to have c strings and std::string and arduino String all together
     //size_t len = stdstr.size();
 
   
   //  integrate this into ws callback or put this into while true loop with queue
   //void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
-    if ( stdstr.starts_with("help") ) {
+    if ( stdstr.starts_with("help") ) {    //  this is c++20 more readable than !stdstr.rfind("help", 0) or with c strings !strncmp(cstr, "help", 4)
     //if ( !msg.rfind("help", 0) ) {
       String peerstring = "";    // this is temporary todo redo this with const char* or std::string
       
@@ -181,17 +184,17 @@ void wstas() {
     //}
 
     if ( stdstr.starts_with("topic ") ) {
-      prefs.putString("mqtop", msg.substring(6)); ws.print("mqtt topic set to '" + msg.substring(6) + "'\n"); return;
+      prefs.putString("mqtop", cstr + 6); std::string out = "mqtt topic set to '" + std::string(cstr + 6) + "'\n";
     }
     if ( stdstr.starts_with("debug ") ) {
-      prefs.putString("debuglevel", msg.substring(6)); ws.print("debug level set to '" + msg.substring(6) + "'\n"); return;
+      prefs.putString("debuglevel", cstr + 6); ws.print("debug level set to '" + (cstr + 6) + "'\n"); return;
     }
     if ( stdstr.starts_with("publ ") ) {
       ws.print("this is disabled fix this");
       //xQueueSend(sendmqttQueue, msg.substring(5).c_str(), 0); return;
     }
     if ( stdstr.starts_with("serv ") ) {
-      prefs.putString("mqserv", msg.substring(5)); ws.print("mqtt server set to '" + msg.substring(5) + "'\n"); return;
+      prefs.putString("mqserv", cstr + 6); ws.print("mqtt server set to '" + (cstr + 6) + "'\n"); return;
     }
 
     // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
@@ -323,8 +326,12 @@ void wstas() {
     }
     ws.print("recived " + msg + " unknown try 'help' \n");
   
-  
-  
+    if(!out.empty()) {
+      // create library buffer, copy bytes, send (avoids extra internal copies)  // Using internal websocket buffer to improve memory consumption and avoid another internal copy when enqueueing the message
+      AsyncWebSocketMessageBuffer* wsBuf = ws.makeBuffer(out.size());
+      memcpy(wsBuf->get(), out.data(), out.size());
+      ws.send(wsBuf);
+    }
   
   
   });    //  attach message callback
