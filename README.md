@@ -4,6 +4,8 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+todo - this perhaps is stoopid but somehow encrypt hkdfs until used so a leak/dump is not catastrophic
+
 todo - perhaps pass prefs task/queue handles as parameters
 
 todo - store hkdfs in one list instead of with names
