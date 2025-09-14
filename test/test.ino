@@ -116,10 +116,6 @@ void networkTas(void *parameter) {
 TaskHandle_t wsTasHandle;
 //  perhpas dont use queue here and instead use xMessageBuffer with callbacks
 void wstas() {
-
-  WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
-
-
   /*
   void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
     if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
@@ -129,19 +125,15 @@ void wstas() {
   }
   */
 
-
-
   AsyncWebServer server(80);
 
-  ws.onMessage([&ws](const std::string& stdstr) { //recv(msg.c_str());
+  WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
+
+  ws.onMessage([&ws](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
     const char *cstr = stdstr.c_str();    //  this is for .putString and for ws.print this feels wrong to have c strings and std::string and arduino String all together
     //size_t len = stdstr.size();
 
-  
-  //  integrate this into ws callback or put this into while true loop with queue
-  //void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
-    if ( stdstr.starts_with("help") ) {    //  this is c++20 more readable than !stdstr.rfind("help", 0) or with c strings !strncmp(cstr, "help", 4)
-    //if ( !msg.rfind("help", 0) ) {
+    if ( stdstr.starts_with("help") ) {    //  here c++ more readable than !stdstr.rfind("help", 0) or with c strings !strncmp(cstr, "help", 4)
       String peerstring = "";    // this is temporary todo redo this with const char* or std::string
       
       size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
@@ -149,11 +141,6 @@ void wstas() {
       if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
       for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }    //  iterate over peers and add to peerstring
       free(peers);
-
-      //char i[2] = {'0', '\0'}; while (prefs.isKey(i)) {
-        //peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
-        //i[0]++;
-      //}
 
       ws.print("\n \n"
           "\nwhen wlan fails an access point spawns \n"
@@ -184,17 +171,17 @@ void wstas() {
     //}
 
     if ( stdstr.starts_with("topic ") ) {
-      prefs.putString("mqtop", cstr + 6); std::string out = "mqtt topic set to '" + std::string(cstr + 6) + "'\n";
+      prefs.putString("mqtop", cstr + 6); ws.printf("mqtt topic set to %s\n", cstr + 6); return;
     }
     if ( stdstr.starts_with("debug ") ) {
-      prefs.putString("debuglevel", cstr + 6); ws.print("debug level set to '" + (cstr + 6) + "'\n"); return;
+      prefs.putString("debuglevel", cstr + 6); ws.printf("debug level set to %s\n", cstr + 6); return;
     }
     if ( stdstr.starts_with("publ ") ) {
       ws.print("this is disabled fix this");
       //xQueueSend(sendmqttQueue, msg.substring(5).c_str(), 0); return;
     }
     if ( stdstr.starts_with("serv ") ) {
-      prefs.putString("mqserv", cstr + 6); ws.print("mqtt server set to '" + (cstr + 6) + "'\n"); return;
+      prefs.putString("mqserv", cstr + 6); ws.printf("mqtt server set to %s\n", cstr + 6); return;
     }
 
     // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
@@ -204,14 +191,6 @@ void wstas() {
 
     // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
     //                        overwrite secret here for already known peers
-
-
-
-
-    //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
-    //                      - but this would add complexety of malloc when ever we have to access the peers
-    //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
-    //                      - requires more nvs reads one for size and one for data
 
       size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
 
@@ -285,13 +264,13 @@ void wstas() {
 
     }
     if ( stdstr.starts_with("ssid ") ) {
-      prefs.putString("ssid", msg.substring(5)); ws.print("ssid set to '" + msg.substring(5) + "'\n"); return;
+      prefs.putString("ssid", msg.substring(5)); ws.printf("ssid set to '%s'\n", cstr + 5); return;
     }
     if ( stdstr.starts_with("pass ") ) {
-      prefs.putString("pass", msg.substring(5)); ws.print("pass set to '" + msg.substring(5) + "'\n"); return;
+      prefs.putString("pass", msg.substring(5)); ws.printf("pass set to '%s'\n", cstr + 5); return;
     }
     if ( stdstr.starts_with("restart") ) {
-      ws.print("restarting esp"); ESP.restart(); return;
+      ws.print("restarting esp"); ESP.restart();
     }
     if ( stdstr.starts_with("apt upgrade ") ) {
       ws.print("'restart' to init upgrade with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
@@ -325,15 +304,7 @@ void wstas() {
       int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
     }
     ws.print("recived " + msg + " unknown try 'help' \n");
-  
-    if(!out.empty()) {
-      // create library buffer, copy bytes, send (avoids extra internal copies)  // Using internal websocket buffer to improve memory consumption and avoid another internal copy when enqueueing the message
-      AsyncWebSocketMessageBuffer* wsBuf = ws.makeBuffer(out.size());
-      memcpy(wsBuf->get(), out.data(), out.size());
-      ws.send(wsBuf);
-    }
-  
-  
+
   });    //  attach message callback
 
   ws.begin(&server);    //  init webserial
@@ -383,25 +354,32 @@ void wstas() {
   server.begin();
 
 
+  //void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
   
+  size_t size = prefs.getBytesLength("airlink");
+  if (size) {
+    char *airlink = malloc( size );
+    if (!airlink) { ws.print("failed to allocate memory for airlink\n"); ESP.restart(); }    //  check if malloc worked
+    prefs.getBytes("airlink", airlink, size);
+    prefs.remove("airlink");    //  disable airlink for next boot
 
-  //  move this into the other webserial message callback somehow
-  void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
-    WiFiClientSecure secureClient;
+
+    //  -------- TODO --------
+    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
+
+    WiFiClientSecure secureClient;    
     HTTPUpdate up;
 
-    if( airlink ) {    //  only do this when airlink has value
-      prefs.putString("airlink", "");    //  disable airlink for next boot
-      //String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
-      secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
-      up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
-      up.onStart([]() { ws.print("overwrite firmware init download \n"); });
-      up.onEnd([]() { ws.print("firmware download success so restart to overwrite \n"); });
-      up.onError([&up](int err) { ws.print(  up.getLastErrorString() + " \n"); });
-      up.onProgress([](int current, int total) { ws.print(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
-      HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
-    }
+    secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
+    up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
+    up.onStart([]() { ws.print("overwrite firmware init download \n"); });
+    up.onEnd([]() { ws.print("firmware download success so restart to overwrite \n"); });
+    up.onError([&up](int err) { ws.print(  up.getLastErrorString() + " \n"); });
+    up.onProgress([](int current, int total) { ws.print(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+    HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
+  
     ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
+    ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);
   }
 
 
