@@ -89,17 +89,12 @@ void networkTas(void *parameter) {
     WiFi.mode(WIFI_AP);
     WiFi.softAP("fpaper", "");
     Serial.println(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
-    
-    // Perhaps add mdns here for ap mode too
-    
+    //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
   } else {
     Serial.println(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
-    
-    if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
-
+    //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
     vTaskDelete(NULL);    //  all done so delete this task
   }
-
 
   DNSServer dnsServer;
   dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
@@ -129,8 +124,83 @@ void wstas() {
 
   WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
 
-  ws.onMessage([&ws](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
-    const char *cstr = stdstr.c_str();    //  this is for .putString and for ws.print this feels wrong to have c strings and std::string and arduino String all together
+
+  // Define handler type
+  //using Handler = std::function<void(std::string_view args)>;
+  
+
+  const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
+    {"topic", [&](std::string args) {
+      if (args.empty()) { ws.print("Error: topic requires a value\n"); return; }
+      prefs.putString("mqtop", args.c_str());
+      ws.printf("MQTT topic set to '%s'\n", args.c_str());
+    }},
+    
+    {"debug", [&](std::string args) {
+      if (args.empty()) { ws.print("Error: debug requires a level\n"); return; }
+      prefs.putString("debuglevel", args.c_str());
+      ws.printf("Debug level set to '%s'\n", args.c_str());
+    }},
+    
+    {"ssid", [&](std::string args) {
+      if (args.empty()) { ws.print("Error: ssid requires a value\n"); return; }
+      prefs.putString("ssid", args.c_str());
+      ws.printf("SSID set to '%s'\n", args.c_str());
+    }},
+    
+    {"pass", [&](std::string args) {
+      if (args.empty()) { ws.print("Error: pass requires a value\n"); return; }
+      prefs.putString("pass", args.c_str());
+      ws.printf("Password set to '%s'\n", args.c_str());
+    }},
+    
+    {"serv", [&](std::string args) {
+      if (args.empty()) { ws.print("Error: serv requires a URL\n"); return; }
+      prefs.putString("mqserv", args.c_str());
+      ws.printf("MQTT server set to '%s'\n", args.c_str());
+    }},
+    
+    {"restart", [&](std::string args) {
+      ws.print("Restarting ESP...\n");
+      ESP.restart();
+    }},
+    
+    {"help", [&](std::string args) {
+      String peerstring = "";
+      size_t size = prefs.getBytesLength("peers");
+      char (*peers)[16] = (char (*)[16]) malloc(size);
+      prefs.getBytes("peers", peers, size);
+      if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }
+      for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }
+      free(peers);
+      
+      ws.print("\n \nCommands:\n"
+                "ssid 'ssid'         - sets WLAN '" + prefs.getString("ssid", "N.A.") + "'\n"
+                "pass 'password'     - sets password\n"
+                "peer 'name' 'secret' - adds peer '" + peerstring + "'\n"
+                "serv 'mqtt://url'   - sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "\n"
+                "topic 'mqtt/topic'  - sets topic '" + prefs.getString("mqtop", "fpaper/+") + "'\n"
+                "debug 'level'       - sets debug level '" + prefs.getString("debuglevel", "info") + "'\n"
+                "restart             - restarts device\n"
+                "help                - shows this help\n\n");
+    }}
+  };
+
+
+  ws.onMessage([&ws, &cmds](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
+    //const char *cstr = stdstr.c_str();    //  this is for .putString and for ws.print this feels wrong to have c strings and std::string and arduino String all together
+    auto pos = stdstr.find(' ');
+    auto it = cmds.find(stdstr.substr(0, pos));
+    if (it != cmds.end()) {
+      it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
+    } else {
+      ws.print("'" + stdstr + "' is unknown try 'help'\n");
+    }
+  });    //  attach message callback
+
+  
+
+  /*  ------------- TODO ------- take these and put them into the unordered map above -----------------
     //size_t len = stdstr.size();
 
     if ( stdstr.starts_with("help") ) {    //  here c++ more readable than !stdstr.rfind("help", 0) or with c strings !strncmp(cstr, "help", 4)
@@ -169,6 +239,26 @@ void wstas() {
     //if (msg.indexOf("slots ") == 0) {
     //  prefs.putString("slotcount", msg.substring(6)); ws.print("'" + msg.substring(6) + "' slots available\n"); return;
     //}
+
+    auto pos = stdstr.find(' '); 
+    if (pos != std::string::npos) {    //  this replaces a hole lot of ifelses
+        ws.putString(stdstr.substr(0, pos).c_str(), stdstr.substr(pos + 1).c_str());
+    }
+
+
+
+
+    static const std::set<std::string> validset{"ssid", "pass", "serv", "topic", "top", "sit", "debug", "airlink", "restart"};
+    auto pos = stdstr.find(' ');
+    auto valid = validset.find(stdstr.substr(0, pos));
+
+    if (validset.count(stdstr.substr(0, pos))) {
+        ws.putString(stdstr.substr(0, pos).c_str(), stdstr.substr(pos + 1).c_str());
+    }
+
+
+
+
 
     if ( stdstr.starts_with("topic ") ) {
       prefs.putString("mqtop", cstr + 6); ws.printf("mqtt topic set to %s\n", cstr + 6); return;
@@ -225,7 +315,7 @@ void wstas() {
 
 
 
-    /*
+    //------------------------------
       if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
 
       //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
@@ -260,27 +350,27 @@ void wstas() {
         if (i < sizeof(testbuff) - 1) testbuffHex += " ";
       }
       ws.print("readback derived (hex): " + testbuffHex + "\n");
-      */
+    // --------------------------
 
     }
     if ( stdstr.starts_with("ssid ") ) {
-      prefs.putString("ssid", msg.substring(5)); ws.printf("ssid set to '%s'\n", cstr + 5); return;
+      prefs.putString("ssid", cstr + 5); ws.printf("ssid set to '%s'\n", cstr + 5); return;
     }
     if ( stdstr.starts_with("pass ") ) {
-      prefs.putString("pass", msg.substring(5)); ws.printf("pass set to '%s'\n", cstr + 5); return;
+      prefs.putString("pass", cstr + 5); ws.printf("pass set to '%s'\n", cstr + 5); return;
     }
     if ( stdstr.starts_with("restart") ) {
       ws.print("restarting esp"); ESP.restart();
     }
     if ( stdstr.starts_with("apt upgrade ") ) {
-      ws.print("'restart' to init upgrade with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
+      ws.print("restart to try with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
       //ws.print("firmware link " + msg.substring(12) + " '\n" ); tryair( msg.substring(12) ); return;
     }
     if ( stdstr.starts_with("rm -rf") ) {
       prefs.clear(); ws.print("cleared preferences"); return;
     }
     if ( stdstr.starts_with("top ") ) {
-      prefs.putInt("top", msg.substring(4).toInt()); xQueueSend(servoQueue, "top", 0); ws.print("top angel set to '" + msg.substring(4) + "'\n"); return;
+      prefs.putInt("top", msg.substring(4).toInt()); xQueueSend(servoQueue, "top", 0); ws.print("top angle set to '" + msg.substring(4) + "'\n"); return;
     }
     if ( stdstr.starts_with("sit ") ) {
       prefs.putInt("sit", msg.substring(4).toInt()); xQueueSend(servoQueue, "sit", 0); ws.print("sit angle set to '" + msg.substring(4) + "'\n"); return;
@@ -306,6 +396,10 @@ void wstas() {
     ws.print("recived " + msg + " unknown try 'help' \n");
 
   });    //  attach message callback
+  */
+
+
+
 
   ws.begin(&server);    //  init webserial
 
@@ -351,23 +445,25 @@ void wstas() {
   server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
+
+  if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+
   server.begin();
 
 
   //void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
   
-  size_t size = prefs.getBytesLength("airlink");
-  if (size) {
-    char *airlink = malloc( size );
-    if (!airlink) { ws.print("failed to allocate memory for airlink\n"); ESP.restart(); }    //  check if malloc worked
-    prefs.getBytes("airlink", airlink, size);
-    prefs.remove("airlink");    //  disable airlink for next boot
-
-
+  // either airlink has value -> try that
+  // when auto update has vlalue always try that on boot except when airlink has value
     //  -------- TODO --------
-    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
+    
+  }
+  
+  if (prefs.getBytesLength("airlink") || prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot
+    char airlink[256] = "";    //  hardcode auto firmware link here this has hardcoded length for simplicity
+    if ( prefs.getBytes("airlink", airlink, sizeof(airlink)) ) prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
 
-    WiFiClientSecure secureClient;    
+    WiFiClientSecure secureClient;    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
     HTTPUpdate up;
 
     secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
@@ -381,17 +477,6 @@ void wstas() {
     ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
     ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);
   }
-
-
-
-
-
-
-  
-
-
-
-
 
 
   while (true) {
