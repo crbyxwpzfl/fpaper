@@ -4,25 +4,24 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
-todo - this perhaps is stoopid but somehow encrypt hkdfs until used so a leak/dump is not catastrophic
 
-todo - perhaps pass prefs task/queue handles as parameters
+todo - pass pointer to peers and hkdf list instead of creating local copies in flanksTas and mqttTas
 
-todo - store hkdfs in one list instead of with names
+todo - perhaps pass prefs and task/queue handles as parameters
+
+todo - store hkdfs in a list instead of with names
 
 todo - replace strcat(test, "appendix") with strcpy(&test[index], "appendix") strcpy should be faster and we usually know index
 
-todo - combine wifi, webserial, dns into one task
-
 todo - stop using arduino Strings hopfully this is not just esoteric
-
-todo - how do you feel about auto updates
 
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
 
-todo - read as much prefs stuff into memory instead of constantly hitting nvs
+todo - read as much prefs stuff into memory as feasable instead of constantly hitting nvs
 
 planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
+
+vision - this perhaps is stoopid but somehow encrypt hkdfs until used so a leak/dump is not catastrophic
 
 vision - replace prefs. reads and puts with perhpas rtos message buffers for thread safety
 
