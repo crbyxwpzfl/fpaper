@@ -113,6 +113,8 @@ void networkTas(void *parameter) {
 
 
 
+static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
+static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
 
 TaskHandle_t wsTasHandle;
 QueueHandle_t logsQueue;
@@ -127,47 +129,49 @@ void wstas() {
   WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
 
 
+  size_t peersize = prefs.getBytesLength("peers"); prefs.getBytes("peers", peers.data(), peersize);    //  read peer list into vector
+  size_t hkdfsize = prefs.getBytesLength("hkdfs"); hkdfs.resize(hkdfsize / 32); prefs.getBytes("hkdfs", hkdfs.data(), hkdfsize);    //  read hkdf list into vector
+
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
 
     // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
 
     {"peer", [&](std::string args) {
-      if (args.empty() ) { ws.print("eeee peer requires a value\n"); return; }
-      auto spacepos = args.find(' ') ;    //  find space if any
-      if (spacepos > 8) { ws.print("eeee peer name too long\n"); return; }    //  check peer name length
 
-      size_t peersize = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( peersize +16 );    //  allocate memory for peer list
-      if (!peers) { ws.print("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
+    // ---------- TODO -------- find edge cases and fix them here !!!!
 
-      size_t hkdfsize = prefs.getBytesLength("hkdfs"); char (*hkdfs)[32] = (char (*)[32]) malloc( hkdfsize +32 );    //  allocate memory for hkdf list
-      if (!hkdfs) { ws.print("failed to allocate memory for hkdfs\n"); free(peers); ESP.restart(); }    //  check if malloc worked
+      if (args.empty()) { ws.print("eeee peer requires args\n"); return; }
 
-      if (spacepos == std::string::npos) {    //  no space found means no secret was passed so delete this peer name here
+      auto spacepos = args.find(' ');
 
-      } else {    //  space found so peer and secret was passed so add this peer here
+      if (spacepos == std::string::npos) {    //  do deletion here delete the peer and all associated keys then move topmost peer to deleted peers position to keep iterable structure
+        for (size_t i = 1; i < peers.size(); ++i) {    //  never delete local peer at index zero
+          if ( !strncmp(peers[i].data(), args.c_str(), peers[i].size()) ) peers.erase(peers.begin() + i); //  this is slow but this is not a frequent operation
+        }
 
-        prefs.getBytes("peers", peers, peersize);    //  read peer list
-        peers[peersize/16][ args.copy( peers[peersize/16], spacepos) ] = '\0';    //  add peer name into list and ensure NUL termination
-        prefs.putBytes("peers", peers, peersize+16);    //  write back peer list with new peer
+        prefs.putBytes("peers", peers.data(), peers.size() * 8);
+        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
 
-        prefs.getBytes("hkdfs", hkdfs, hkdfsize);    //  read hkdf list
-        hkdf<SHA256>( hkdfs[hkdfsize/32], 32, args.substr(spacepos+1).c_str(), args.substr(spacepos+1).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-        prefs.putBytes("hkdfs", hkdfs, hkdfsize+32);    //  write back hkdf list with new hkdf
-      
-        ws.printf("added '%s'", args.c_str() ); return;
+        ws.print("deleted '%s'\n", args.c_str()); return;
       }
 
+      if (spacepos < 8) {
+        std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+        args.copy(peer.data(), size_t(7), 0);   // copy directly from args and leave last byte for NUL
+        peers.push_back(peer);    //  append peer to vector
 
+        std::array<uint8_t, 32> hkdf{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+        hkdf<SHA256>(hkdf.data(), 32, args.substr(spacepos + 1), (args.length() - spacepos+1), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+        hkdfs.push_back(hkdf);    //  append hkdf to vector
 
-    // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
-    //                        overwrite secret here for already known peers
+        prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
+        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
 
+        ws.printf("added peer '%s' with secret '%s'\n", peer.data(), args.substr(spacepos + 1)); return;
+      }
 
-      free(peers);    //  free memory for peer list
-
-      xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
-      xTaskNotifyGive(flanksTasHandle);
+      ws.print("eeee peer name too long\n");    //  this is reached when peername too long
     }},
     
     {"topic", [&](std::string args) {
@@ -228,7 +232,6 @@ void wstas() {
 
 
   ws.onMessage([&ws, &cmds](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
-    //const char *cstr = stdstr.c_str();    //  this is for .putString and for ws.print this feels wrong to have c strings and std::string and arduino String all together
     auto pos = stdstr.find(' ');
     auto it = cmds.find(stdstr.substr(0, pos));
     if (it != cmds.end()) {
@@ -237,7 +240,7 @@ void wstas() {
       ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
     }
   });    //  attach message callback
-
+  
   
 
   /*  ------------- TODO ------- take these and put them into the unordered map above -----------------
