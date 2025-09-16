@@ -112,41 +112,64 @@ void networkTas(void *parameter) {
 
 
 
+
+
 TaskHandle_t wsTasHandle;
-//  perhpas dont use queue here and instead use xMessageBuffer with callbacks
-
+QueueHandle_t logsQueue;
+struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
 void wstas() {
-  
-  
-  /* Defines the memory that will actually hold the messages within the message
-  * buffer. Should be one more than the value passed in the xBufferSizeBytes
-  * parameter. */
-  static uint8_t ucMessageBufferStorage[ STORAGE_SIZE_BYTES ];
+  logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
 
-  /* The variable used to hold the message buffer structure. */
-  StaticMessageBuffer_t xMessageBufferStruct;
-
-  MessageBufferHandle_t xMessageBuffer;
-
-  /* Create a message buffer that uses the functions defined
-    * using the sbSEND_COMPLETED() and sbRECEIVE_COMPLETED()
-    * macros as send and receive completed callback functions. */
-  xMessageBuffer = xMessageBufferCreateStatic( sizeof( ucMessageBufferStorage ),
-                                                ucMessageBufferStorage,
-                                                &xMessageBufferStruct );
-
-
+  static uint8_t prefsverbosity = 0; // TODO add verbosity command with nvs
 
   AsyncWebServer server(80);
 
   WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
 
 
-  // Define handler type
-  //using Handler = std::function<void(std::string_view args)>;
-  
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
+
+    // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
+
+    {"peer", [&](std::string args) {
+      if (args.empty() ) { ws.print("eeee peer requires a value\n"); return; }
+      auto spacepos = args.find(' ') ;    //  find space if any
+      if (spacepos > 8) { ws.print("eeee peer name too long\n"); return; }    //  check peer name length
+
+      size_t peersize = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( peersize +16 );    //  allocate memory for peer list
+      if (!peers) { ws.print("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
+
+      size_t hkdfsize = prefs.getBytesLength("hkdfs"); char (*hkdfs)[32] = (char (*)[32]) malloc( hkdfsize +32 );    //  allocate memory for hkdf list
+      if (!hkdfs) { ws.print("failed to allocate memory for hkdfs\n"); free(peers); ESP.restart(); }    //  check if malloc worked
+
+      if (spacepos == std::string::npos) {    //  no space found means no secret was passed so delete this peer name here
+
+      } else {    //  space found so peer and secret was passed so add this peer here
+
+        prefs.getBytes("peers", peers, peersize);    //  read peer list
+        peers[peersize/16][ args.copy( peers[peersize/16], spacepos) ] = '\0';    //  add peer name into list and ensure NUL termination
+        prefs.putBytes("peers", peers, peersize+16);    //  write back peer list with new peer
+
+        prefs.getBytes("hkdfs", hkdfs, hkdfsize);    //  read hkdf list
+        hkdf<SHA256>( hkdfs[hkdfsize/32], 32, args.substr(spacepos+1).c_str(), args.substr(spacepos+1).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+        prefs.putBytes("hkdfs", hkdfs, hkdfsize+32);    //  write back hkdf list with new hkdf
+      
+        ws.printf("added '%s'", args.c_str() ); return;
+      }
+
+
+
+    // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
+    //                        overwrite secret here for already known peers
+
+
+      free(peers);    //  free memory for peer list
+
+      xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
+      xTaskNotifyGive(flanksTasHandle);
+    }},
+    
     {"topic", [&](std::string args) {
       if (args.empty()) { ws.print("Error: topic requires a value\n"); return; }
       prefs.putString("mqtop", args.c_str());
@@ -487,11 +510,9 @@ void wstas() {
   uint32_t livetime = prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
-    //  process feedlog here
-    //if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
-    //  Serial.print(text);    // TODO add \r\n here so each line is printed correctly
-    //  ws.print(text.c_str());
-    //}
+    logsstct logs; if( xQueueReceive( logsQueue, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
+      if ( prefsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
+    }
     taskYIELD();
   }
 
@@ -520,8 +541,9 @@ void showTas(void *parameter) {    //  this handles the epaper
 
   while(true){
     //if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
-    if (!uxQueueMessagesWaiting( showQueue )){
-      showstct show; xQueueReceive(showQueue, &show, 0);
+    //if (!uxQueueMessagesWaiting( showQueue )){
+    //  showstct show; xQueueReceive(showQueue, &show, 0);
+    showstct show; if( xQueueReceive( showQueue, &show, 0 ) == pdPASS ) {
 
       if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(showQueue, &show, 0); continue;
         Serial.println("did a pushback");
@@ -601,12 +623,13 @@ QueueHandle_t servoQueue;    //  handle for servo queue
 void servoTas(void *parameter) {    //  this handles servo movement
   servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
-  char buff[] = "sit";    //  why does char buf[4] error help
+  //char buff[] = "sit";    //  why does char buf[4] error help
   
   while(true){
     //if(!xQueueIsQueueEmptyFromISR( servoQueue )){
-    if(!uxQueueMessagesWaiting( servoQueue )){
-      xQueueReceive(servoQueue, &buff, 0);    //  just do sth when queue not empty
+    //if(!uxQueueMessagesWaiting( servoQueue )){
+    //  xQueueReceive(servoQueue, &buff, 0);    //  just do sth when queue not empty
+    char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {
       //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
       if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
       if (!strcmp(buff, "sit")) { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
@@ -805,12 +828,11 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
 
     //if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
-    if(!uxQueueMessagesWaiting( sendmqttQueue )){    //  just do sth when queue not empty
-
+    //if(!uxQueueMessagesWaiting( sendmqttQueue )){    //  just do sth when queue not empty
+    //  sendstct send; xQueueReceive(sendmqttQueue, &send, 0);
+    sendstct send; if( xQueueReceive( sendmqttQueue, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
       //if (!seenecho) { feedlog("no wait for echo"); continue;}    //  do not pop queue when last messages echo was not seen do not push back into queue to preserved sequence   // optimization this technicaly doe not have to wait on local sends
-
-      sendstct send; xQueueReceive(sendmqttQueue, &send, 0);    //  reads first word out of queue
 
       Serial.println("sending to " + String(send.peer));
 
