@@ -19,6 +19,8 @@ todo - add ram info and revise prefernces like rotation,btn pin, add show anythi
 
 todo - read as much prefs stuff into memory as feasable instead of constantly hitting nvs
 
+planed - do not hardcode firmware link istead querry latest release and compare to current version
+
 planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
 
 vision - this perhaps is stoopid but somehow encrypt hkdfs until used so a leak/dump is not catastrophic

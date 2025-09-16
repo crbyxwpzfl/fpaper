@@ -56,10 +56,14 @@
 #include <xpwallpaper.h>  //  test image bitmap
 
 
+#include <unordered_map>
+#include <functional>
+//#include <string_view>
 
 
 
-Preferences prefs;    //  first declaration of preferences as perfs
+
+Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
 
 TaskHandle_t flanksTasHandle;
 
@@ -110,15 +114,28 @@ void networkTas(void *parameter) {
 
 TaskHandle_t wsTasHandle;
 //  perhpas dont use queue here and instead use xMessageBuffer with callbacks
+
 void wstas() {
-  /*
-  void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
-    if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
-      Serial.print(text);    // TODO add \r\n here so each line is printed correctly
-      WebSerial.print(text.c_str()); 
-    }    //  always print info and just debug when debug level
-  }
-  */
+  
+  
+  /* Defines the memory that will actually hold the messages within the message
+  * buffer. Should be one more than the value passed in the xBufferSizeBytes
+  * parameter. */
+  static uint8_t ucMessageBufferStorage[ STORAGE_SIZE_BYTES ];
+
+  /* The variable used to hold the message buffer structure. */
+  StaticMessageBuffer_t xMessageBufferStruct;
+
+  MessageBufferHandle_t xMessageBuffer;
+
+  /* Create a message buffer that uses the functions defined
+    * using the sbSEND_COMPLETED() and sbRECEIVE_COMPLETED()
+    * macros as send and receive completed callback functions. */
+  xMessageBuffer = xMessageBufferCreateStatic( sizeof( ucMessageBufferStorage ),
+                                                ucMessageBufferStorage,
+                                                &xMessageBufferStruct );
+
+
 
   AsyncWebServer server(80);
 
@@ -194,7 +211,7 @@ void wstas() {
     if (it != cmds.end()) {
       it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
     } else {
-      ws.print("'" + stdstr + "' is unknown try 'help'\n");
+      ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
     }
   });    //  attach message callback
 
@@ -399,8 +416,6 @@ void wstas() {
   */
 
 
-
-
   ws.begin(&server);    //  init webserial
 
 
@@ -411,7 +426,7 @@ void wstas() {
 
   server.on("/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
-    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+    [&ws](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
     static char slot[12];    // static to persist across chunks this max is 'profile'
     static uint8_t rcvbuff[15000];    // static buffer allocated once
@@ -446,21 +461,12 @@ void wstas() {
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
 
-  if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+  if ( MDNS.begin("fpaper") ) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
 
   server.begin();
-
-
-  //void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
   
-  // either airlink has value -> try that
-  // when auto update has vlalue always try that on boot except when airlink has value
-    //  -------- TODO --------
-    
-  }
-  
-  if (prefs.getBytesLength("airlink") || prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot
-    char airlink[256] = "";    //  hardcode auto firmware link here this has hardcoded length for simplicity
+  if ( prefs.getBytesLength("airlink") || prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
+    char airlink[256] = "";    //  instead of hardcoding the link here improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/fpaper/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/fpaper/tags' befor download and then use 'https://github.com/crbyxwpzfl/fpaper/releases/latest/download/not-merged-correct-board.bin'
     if ( prefs.getBytes("airlink", airlink, sizeof(airlink)) ) prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
 
     WiFiClientSecure secureClient;    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
@@ -468,24 +474,29 @@ void wstas() {
 
     secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
     up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
-    up.onStart([]() { ws.print("overwrite firmware init download \n"); });
-    up.onEnd([]() { ws.print("firmware download success so restart to overwrite \n"); });
-    up.onError([&up](int err) { ws.print(  up.getLastErrorString() + " \n"); });
-    up.onProgress([](int current, int total) { ws.print(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+    up.onStart([&ws]() { ws.print("overwrite firmware init download \n"); });
+    up.onEnd([&ws]() { ws.print("firmware download success so restart to overwrite \n"); });
+    up.onError([&ws, &up](int err) { ws.print(  up.getLastErrorString() + " \n"); });
+    up.onProgress([&ws](int current, int total) { ws.print(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
     HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
   
-    ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
-    ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);
+    //ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");
+    ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
   }
 
-
-  while (true) {
+  uint32_t livetime = prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
+  uint32_t inittimestamp = millis();
+  while ( !livetime || (millis() - inittimestamp) < livetime ) {
     //  process feedlog here
     //if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
     //  Serial.print(text);    // TODO add \r\n here so each line is printed correctly
     //  ws.print(text.c_str());
     //}
+    taskYIELD();
   }
+
+  server.end();    //  stop server so callback are unregistered so ws is not used anymore
+  vTaskDelete(NULL);     //  safe to delete task and destroy ws
 }
 
 
