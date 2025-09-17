@@ -1,21 +1,4 @@
 
-// to implement slash fix
-// implement mqtt wildcard see https://github.com/theelims/PsychicMqttClient/issues/6#issuecomment-2530154457
-// primary peer one click
-// duble click to all peers
-// set custom positions for each peer
-// 
-// ditch idle pulse do manual connection check
-// 
-// clarify commands in help
-
-
-
-
-
-
-
-
 
 //  switched to arduinocli since platformio does not really support arduino core v3 eventually I really want to switch to idf and ditch arduino in the long term
 //  `arduino-cli sketch new all-together-arduino`    init sketch
@@ -56,9 +39,12 @@
 #include <xpwallpaper.h>  //  test image bitmap
 
 
-#include <unordered_map>
+#include <unordered_map>    //  c++ stuff
 #include <functional>
+#include <format>
+#include <string>
 //#include <string_view>
+
 
 
 
@@ -66,6 +52,11 @@
 Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
 
 TaskHandle_t flanksTasHandle;
+
+
+// --------- TODO --------
+//  currently 200KB internal Ram is remaining this is not too much
+// 
 
 
 // ----------- TODO -----------
@@ -115,6 +106,7 @@ void networkTas(void *parameter) {
 
 static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
 static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
+static uint32_t slots = prefs.getUInt("slots", 0);
 
 TaskHandle_t wsTasHandle;
 QueueHandle_t logsQueue;
@@ -134,26 +126,26 @@ void wstas() {
 
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
-
-
-
-    {"delslot", [&](std::string args) {
+    {"delslot", [&](std::string args) {    //  all these conversions feel wrong
       if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
-          // -------- TODO --------- add function to delete slot copy data from top slot to args slot then remove top slot
-      uint32_t slot = static_cast<uint32_t>(std::stoul(args));    //  execption when out of range or invalid argument
-      uint32_t slots = prefs.getUInt("slots", 0);    //  find current number of slots
 
-      if (slot > slots) { ws.print("eeee slot '%s' out of range\n", args.c_str()); return; }    //  slot out of range
+      uint32_t slot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since user will be informed below
 
-      uint8_t temp[15000];
-      prefs.getBytes( CONVTOSTRslots , temp, sizeof(temp) );    //  read top most slot into temp
-      prefs.putBytes( CONVTOSTRslot , temp, sizeof(temp) );    //  copy temp to target slot
-      prefs.remove( CONVTOSTRslots );    //  remove top most slot
+      if (slot > slots) { ws.printf("eeee slot '%s' out of range\n", args.c_str()); return; }
+
+      if (slot != slots) {    //  swap slot with top most slot
+        uint8_t temp[15000];
+        prefs.getBytes( std::format("{}", slots).c_str() , temp, sizeof(temp) );    //  read top most slot into temp
+        prefs.putBytes( args.c_str() , temp, sizeof(temp) );    //  copy temp to target slot
+      }
+      prefs.remove( std::format("{}", slots).c_str() );    //  remove top most slot
       prefs.putUInt("slots", slots -1);    //  adjust / save slots count
+      ws.printf("deleted slot '%u'\n", slot); return;
     }},
 
     {"peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
       if (args.empty()) { ws.print("eeee peer requires args\n"); return; }
+      if (strtoul(args.c_str(), NULL, 10)) { ws.print("eeee numbers not allowed\n"); return; }    //  prevent peer names which are numbers since these are reserved for slots
 
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
 
@@ -167,14 +159,14 @@ void wstas() {
         args.copy(peer.data(), size_t(7), 0);   // copy directly from args and leave last byte for NUL
         peers.push_back(peer);    //  append peer to vector
 
-        std::array<uint8_t, 32> hkdf{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-        hkdf<SHA256>(hkdf.data(), 32, args.substr(spacepos + 1), (args.length() - spacepos+1), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-        hkdfs.push_back(hkdf);    //  append hkdf to vector
+        std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+        hkdf<SHA256>(hkdfout.data(), 32, (args.c_str() + name.length()), strlen(args.c_str() + name.length()), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+        hkdfs.push_back(hkdfout);    //  append hkdf to vector
 
         prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
         prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
 
-        ws.printf("added peer '%s' with secret '%s'\n", peer.data(), args.substr(spacepos + 1)); return;
+        ws.printf("added peer '%s' with secret '%s'\n", peer.data(), (args.c_str() + name.length())); return;
       }
 
       if (found && args.find(' ') == std::string::npos) {    //  when peer found and no secret then delete peer and all associated data
@@ -190,7 +182,7 @@ void wstas() {
         prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list without deleted peer to nvs
         prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
 
-        ws.print("deleted peer '%s'\n", args.c_str()); return;
+        ws.printf("deleted peer '%s'\n", args.c_str()); return;
       }
 
       ws.print("eeee peer name too long\n");    //  this is reached when peername too long
@@ -240,6 +232,13 @@ void wstas() {
       for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }
       free(peers);
       
+
+      // TODO -------- add this Serial.println(__cplusplus); // Shows C++ standard version
+      //  no filepath - small snippet
+      // Serial.printf("free heap: %u\n", ESP.getFreeHeap());
+     //  Serial.printf("psram found: %d free psram: %u\n", psramFound(), ESP.getFreePsram());
+
+
       ws.print("\n \nCommands:\n"
                 "ssid 'ssid'         - sets WLAN '" + prefs.getString("ssid", "N.A.") + "'\n"
                 "pass 'password'     - sets password\n"
