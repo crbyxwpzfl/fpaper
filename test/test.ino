@@ -135,28 +135,34 @@ void wstas() {
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
 
-    // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
 
-    {"peer", [&](std::string args) {
 
-    // ---------- TODO -------- find edge cases and fix them here !!!!
+    {"delslot", [&](std::string args) {
+      if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
+          // -------- TODO --------- add function to delete slot copy data from top slot to args slot then remove top slot
+      uint32_t slot = static_cast<uint32_t>(std::stoul(args));    //  execption when out of range or invalid argument
+      uint32_t slots = prefs.getUInt("slots", 0);    //  find current number of slots
 
+      if (slot > slots) { ws.print("eeee slot '%s' out of range\n", args.c_str()); return; }    //  slot out of range
+
+      uint8_t temp[15000];
+      prefs.getBytes( CONVTOSTRslots , temp, sizeof(temp) );    //  read top most slot into temp
+      prefs.putBytes( CONVTOSTRslot , temp, sizeof(temp) );    //  copy temp to target slot
+      prefs.remove( CONVTOSTRslots );    //  remove top most slot
+      prefs.putUInt("slots", slots -1);    //  adjust / save slots count
+    }},
+
+    {"peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
       if (args.empty()) { ws.print("eeee peer requires args\n"); return; }
 
-      auto spacepos = args.find(' ');
+      std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
 
-      if (spacepos == std::string::npos) {    //  do deletion here delete the peer and all associated keys then move topmost peer to deleted peers position to keep iterable structure
-        for (size_t i = 1; i < peers.size(); ++i) {    //  never delete local peer at index zero
-          if ( !strncmp(peers[i].data(), args.c_str(), peers[i].size()) ) peers.erase(peers.begin() + i); //  this is slow but this is not a frequent operation
-        }
-
-        prefs.putBytes("peers", peers.data(), peers.size() * 8);
-        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
-
-        ws.print("deleted '%s'\n", args.c_str()); return;
+      size_t found; for (found = 1; found < peers.size(); ++found) {    //  either find peer in list or return early
+        if ( !strcmp(peers[found].data(), name.c_str()) ) break;
+        if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
       }
 
-      if (spacepos < 8) {
+      if (!found && name.length() < 8) {    //  when peer not found and name length add peer
         std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
         args.copy(peer.data(), size_t(7), 0);   // copy directly from args and leave last byte for NUL
         peers.push_back(peer);    //  append peer to vector
@@ -169,6 +175,22 @@ void wstas() {
         prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
 
         ws.printf("added peer '%s' with secret '%s'\n", peer.data(), args.substr(spacepos + 1)); return;
+      }
+
+      if (found && args.find(' ') == std::string::npos) {    //  when peer found and no secret then delete peer and all associated data
+        peers.erase(peers.begin() + found );    //  this is slow but this is not a frequent operation
+        hkdfs.erase(hkdfs.begin() + found );
+
+        peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+        hkdfs.shrink_to_fit();
+
+        prefs.remove( (args + "latest").c_str() );    //  remove latest foto entry for this peer
+        prefs.remove( (args + "profile").c_str() );    //  remove profile foto entry for this peer
+
+        prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list without deleted peer to nvs
+        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
+
+        ws.print("deleted peer '%s'\n", args.c_str()); return;
       }
 
       ws.print("eeee peer name too long\n");    //  this is reached when peername too long
