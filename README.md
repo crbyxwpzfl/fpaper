@@ -4,6 +4,9 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+
+todo - curretnly 200KB ram is free this is not too much consider moving stuff to PSRAM
+
 todo - perhpas reduce app partion to 1MB and increase nvs space to 4MB to allow more foto space
 
 todo - pass pointer to peers and hkdf list instead of creating local copies in flanksTas and mqttTas
