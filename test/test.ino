@@ -53,6 +53,17 @@
 static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
 static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
 static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
+// perhaps add more here like servo positions like
+// consider removing dynamic changes to these and istead only applie them on restart perhaps
+// pro - simplifies code a lot, 
+//     - less risc for heap fragmentation and crashes,
+//     - easy to create local copies for tasks so no globals needed
+//     - more consitent with settings like wifi or mqtt server wich only take affect after restart
+//
+// con - less flexible, 
+//     - local copies in each task use more ram (but psram is abundant anyway)
+//     - already put work into dynamic changes sunken cost fallacy 
+
 
 QueueHandle_t servoQueue;    //  handle for servo queue this has no associated struct
 

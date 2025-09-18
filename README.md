@@ -13,10 +13,6 @@ todo - pass pointer to peers and hkdf list instead of creating local copies in f
 
 todo - perhaps pass prefs and task/queue handles as parameters
 
-todo - store hkdfs in a list instead of with names
-
-todo - replace strcat(test, "appendix") with strcpy(&test[index], "appendix") strcpy should be faster and we usually know index
-
 todo - stop using arduino Strings hopfully this is not just esoteric
 
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
