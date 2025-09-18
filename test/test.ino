@@ -53,7 +53,7 @@
 static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
 static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
 static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
-// perhaps add more here like servo positions like
+// perhaps add more here like servo positions
 // consider removing dynamic changes to these and istead only applie them on restart perhaps
 // pro - simplifies code a lot, 
 //     - less risc for heap fragmentation and crashes,
@@ -80,12 +80,14 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
 
 
-TaskHandle_t servoTasHandle;
-TaskHandle_t sendmqttHandle;
-TaskHandle_t flanksTasHandle;
-TaskHandle_t networkTasHandle;
-TaskHandle_t wsTasHandle;
-TaskHandle_t showTasHandle;
+
+// only used for get watermarks in wstas info cmd so not globaly needed
+//TaskHandle_t servoTasHandle;
+//TaskHandle_t sendmqttHandle;
+//TaskHandle_t flanksTasHandle;
+//TaskHandle_t networkTasHandle;
+//TaskHandle_t wsTasHandle;
+//TaskHandle_t showTasHandle;
 // -------------------------------------
 
 
@@ -94,6 +96,11 @@ TaskHandle_t showTasHandle;
 
 
 // ----------- TODO -----------
+//
+//  could i replace queues with direct to task notifications for servoQueue, sendmqttQueue, showQueue ?
+//  would not require global queues and structs anymore but how would i actually queue stuff up ?
+//
+//  redo logging pass stuff with verobosity levels into logQueue but use timeouts so tasks do not block 
 //
 //  perhaps instead of global variables pass them as parameters to the tasks at creation
 //
@@ -108,8 +115,10 @@ TaskHandle_t showTasHandle;
 //
 //  NVS ACCESS IS NOT THREAD SAFE find a solution !! eg semaphore or mutex or seperate task wich sends values back to other tasks 
 //  currently all the app code runs on core1 so this is not an issue
-
-
+//
+//  sartup order
+//  - all tasks would like to send logs so logsQueue has to be created first and since it only is consumed with wstas add timout to xQueueSend
+//  - network task is required for webserial and mqtt
 
 
 
@@ -145,6 +154,15 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
 
 void wstas() {    //  this spawns webserial and handles all web stuff
 
+  // this only works after all tasks are created obviously so wstask has to be created last
+  // get task handles for the info task wich tries to get the watermarks of other tasks
+  // instead of keeping global task handles these could be retrieved once here. make sure the taskhndles are not used elsewhere to
+  TaskHandle_t servoTasHandle = xTaskGetHandle("servoTas");
+  TaskHandle_t sendmqttHandle = xTaskGetHandle("sendmqtt");
+  TaskHandle_t flanksTasHandle = xTaskGetHandle("flanksTas");
+  TaskHandle_t networkTasHandle = xTaskGetHandle("networkTas");
+  TaskHandle_t showTasHandle = xTaskGetHandle("showTas");
+  //TaskHandle_t wsTasHandle = xTaskGetHandle("wsTas");   notrequired just do uxTaskGetStackHighWaterMark(NULL) for self
 
   // -------- TODO -----------
   // load the peers and hkdfs vectors from nvs
@@ -390,7 +408,11 @@ void wstas() {    //  this spawns webserial and handles all web stuff
       ws.print("file saved to " + String(slot));
       if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
         prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
-        xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots
+        
+        
+        // TODO remove this xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots 
+        
+        
         ws.print("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
       }
     }
@@ -710,22 +732,53 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
 void setup() {    //  when this int main() instead this does not compile
   
+
+
+  /*
+  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to connect to wifi
+  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
+  xTaskCreate( wstas, "wstas", 32768, NULL, 1, &wstasHandle );    //  spawn web task to handle all web stuff
+  xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
+  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
+  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
+  */
+
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
+  /* not worth it 
+  struct AppContext {
+    Preferences *prefs;                       // pointer to prefs instance (prefs still defined in file)
+    QueueHandle_t servoQueue;
+    QueueHandle_t sendmqttQueue;
+    QueueHandle_t showQueue;
+    QueueHandle_t logsQueue;
+
+    std::vector<std::array<char, 8>> peers;   // moved into ctx
+    std::vector<std::array<uint8_t, 32>> hkdfs;// moved into ctx
+    uint32_t slots = 0;                       // moved into ctx
+
+    struct showstct { char ocupado[5]; uint8_t partial;char nvsalias[16]; };
+    struct sendstct { uint32_t peer; char load[16]; };
+    struct logsstct { uint8_t verbosity; char feed[40]; };
+  };
 
 
-  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to connect to wifi
+  static AppContext *ctx = new AppContext();
+  ctx->prefs = &prefs;
+  ctx->servoQueue   = xQueueCreate(5, sizeof("sit"));
+  ctx->sendmqttQueue= xQueueCreate(5, sizeof(AppContext::sendstct));
+  ctx->showQueue    = xQueueCreate(5, sizeof(AppContext::showstct));
+  ctx->logsQueue    = xQueueCreate(1, sizeof(AppContext::logsstct));
+  */
 
-  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
+  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, NULL );    //  spawn network task to connect to wifi
+  xTaskCreate( wstas, "wstas", 32768, NULL, 1, NULL );    //  spawn web task to handle all web stuff
+  xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, NULL );    //  now spawn async tasks
+  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, NULL );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
+  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, NULL );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
+  xTaskCreate( showTas, "showTas", 32768, NULL, 1, NULL );    //  spawn show task to show stuff on epaper
 
-  xTaskCreate( wstas, "wstas", 32768, NULL, 1, &wstasHandle );    //  spawn web task to handle all web stuff
-
-  xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
-
-  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
-
-  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
 
 
   // TODO MOVE THIS into wstas
