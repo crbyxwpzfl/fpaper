@@ -41,42 +41,70 @@
 
 #include <unordered_map>    //  c++ stuff
 #include <functional>
-#include <format>
+#include <format>    //  TODO this is huge remove this
 #include <string>
 //#include <string_view>
 
 
 
 
+// ----------- global variables -----------
+
+static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
+static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
+static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
+
+QueueHandle_t servoQueue;    //  handle for servo queue this has no associated struct
+
+QueueHandle_t sendmqttQueue;
+struct sendstct { uint32_t peer; char load[16]; };
+
+QueueHandle_t showQueue;
+struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };    //  handle and struct for show queue
+
+QueueHandle_t logsQueue;
+struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
+
 
 Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
 
+
+TaskHandle_t servoTasHandle;
+TaskHandle_t sendmqttHandle;
 TaskHandle_t flanksTasHandle;
+TaskHandle_t networkTasHandle;
+TaskHandle_t wsTasHandle;
+TaskHandle_t showTasHandle;
+// -------------------------------------
 
 
-// --------- TODO --------
-//  currently 200KB internal Ram is remaining this is not too much
-// 
+
+
 
 
 // ----------- TODO -----------
 //
-//  -> combine feedlog() + recv() + tryair() + watermarktask() + WebSerialInitialization into one task
-//     ( auto updateds via tryair() can be done here too )
+//  perhaps instead of global variables pass them as parameters to the tasks at creation
 //
-//  -> give wifi its own task including and dnsservtas()
-//     eitehr keep it running while ap mode for dnsservtas() or suspend it when not in ap mode
+//  currently app uses ~1,2MB of flash perhaps reduce this to less than 1MB
+//  currently 200KB internal Ram is remaining this is not too much
 //
-//  major restructuring concerens
+//  major restructuring concerns
+//  - initialize vectors peers, hkdfs, slots correctly
 //  - correct startup sequence eg wifi has to start first only then webserial and mqtt task can start
-//  - webserial already is async so is it bad to put it into its own task? how do its callbacks behave then?
+//  - webserial already is async so is it bad to put it into its own task?
 //  - same goes for mqtt which is async too
 //
 //  NVS ACCESS IS NOT THREAD SAFE find a solution !! eg semaphore or mutex or seperate task wich sends values back to other tasks 
 //  currently all the app code runs on core1 so this is not an issue
 
-TaskHandle_t networkTasHandle;
-void networkTas(void *parameter) {
+
+
+
+
+
+
+void networkTas(void *parameter) {    //  this connects to wifi or spawns an access point for configuration
   WiFi.mode(WIFI_STA);
   WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
 
@@ -104,21 +132,13 @@ void networkTas(void *parameter) {
 
 
 
-static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
-static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
-static uint32_t slots = prefs.getUInt("slots", 0);
+void wstas() {    //  this spawns webserial and handles all web stuff
 
-TaskHandle_t wsTasHandle;
-QueueHandle_t logsQueue;
-struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
-void wstas() {
 
   // -------- TODO -----------
   // load the peers and hkdfs vectors from nvs
   // if not found initialize them with local peer and garbage for hkdf[0]
   // this is required for iterations over these vectors in mqtt task or flanks task !!!!!
-
-
 
 
   logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
@@ -127,7 +147,7 @@ void wstas() {
 
   AsyncWebServer server(80);
 
-  WebSerial ws;  //  first delclartion of webserial not static anymore since v8.0.0
+  WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
 
 
   size_t peersize = prefs.getBytesLength("peers"); prefs.getBytes("peers", peers.data(), peersize);    //  read peer list into vector
@@ -138,7 +158,9 @@ void wstas() {
     {"delslot", [&](std::string args) {    //  all these conversions feel wrong
       if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
 
-      uint32_t slot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since user will be informed below
+      uint32_t slot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist
+
+      if (!slot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
 
       if (slot > slots) { ws.printf("eeee slot '%s' out of range\n", args.c_str()); return; }
 
@@ -196,7 +218,47 @@ void wstas() {
 
       ws.print("eeee peer name too long\n");    //  this is reached when peername too long
     }},
-    
+
+    // todo add 'wstime' cmd to set the uptime for the webserial
+
+    // todo add 'publ' to publish to mqtt
+
+    // todo add 'apt upgrade' to set frimware url
+
+    // todo add 'rm -rf' to clear nvs prefs.clear();
+
+    // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
+
+
+    // todo either put this inside help or in a seperate info cmd
+    //
+    // char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); ws.print(nvsfree);
+    // ws.print("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
+    // ws.print("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
+    // if(WiFi.getMode() == WIFI_MODE_AP) { ws.print("local ip " + WiFi.softAPIP().toString() + " \n"); }
+    // if(WiFi.getMode() == WIFI_MODE_STA) { ws.print("local ip " + WiFi.localIP().toString() + " \n"); }
+    // char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); ws.print(macStr);    //  this is so tiedious pls help me do not know how to string
+    // ws.print("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
+    // ws.print("| ---- | --- | -------- | -------- | ---------------- | \n");
+    // esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+    // if (pi != NULL) {
+    //   do {
+    //     const esp_partition_t* p = esp_partition_get(pi);
+    //       char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); ws.print(buffer);    //  this sucks i hate strings i miss python
+    //   } while (pi = (esp_partition_next(pi)));
+    // }
+    // int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
+    //    TaskHandle_t watermarkHandle;
+    //    void printWatermarkTas(void *count){
+    //      int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
+    //      for (int i = 0; i < iter; i++) {
+    //          feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "'\n");
+    //          vTaskDelay(1000);
+    //      }
+    //      feedlog("\n\n");
+    //      vTaskDelete(watermarkHandle);
+    //    }
+
     {"topic", [&](std::string args) {
       if (args.empty()) { ws.print("Error: topic requires a value\n"); return; }
       prefs.putString("mqtop", args.c_str());
@@ -205,7 +267,7 @@ void wstas() {
     
     {"debug", [&](std::string args) {
       if (args.empty()) { ws.print("Error: debug requires a level\n"); return; }
-      prefs.putString("debuglevel", args.c_str());
+      prefs.putString("debuglevel", args.c_str());  //  TODO make this an enum !!!!
       ws.printf("Debug level set to '%s'\n", args.c_str());
     }},
     
@@ -240,51 +302,12 @@ void wstas() {
       if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }
       for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }
       free(peers);
-      
 
       // TODO -------- add this Serial.println(__cplusplus); // Shows C++ standard version
       //  no filepath - small snippet
-      // Serial.printf("free heap: %u\n", ESP.getFreeHeap());
-     //  Serial.printf("psram found: %d free psram: %u\n", psramFound(), ESP.getFreePsram());
-
-
-      ws.print("\n \nCommands:\n"
-                "ssid 'ssid'         - sets WLAN '" + prefs.getString("ssid", "N.A.") + "'\n"
-                "pass 'password'     - sets password\n"
-                "peer 'name' 'secret' - adds peer '" + peerstring + "'\n"
-                "serv 'mqtt://url'   - sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + "\n"
-                "topic 'mqtt/topic'  - sets topic '" + prefs.getString("mqtop", "fpaper/+") + "'\n"
-                "debug 'level'       - sets debug level '" + prefs.getString("debuglevel", "info") + "'\n"
-                "restart             - restarts device\n"
-                "help                - shows this help\n\n");
-    }}
-  };
-
-
-  ws.onMessage([&ws, &cmds](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
-    auto pos = stdstr.find(' ');
-    auto it = cmds.find(stdstr.substr(0, pos));
-    if (it != cmds.end()) {
-      it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
-    } else {
-      ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
-    }
-  });    //  attach message callback
-  
-  
-
-  /*  ------------- TODO ------- take these and put them into the unordered map above -----------------
-    //size_t len = stdstr.size();
-
-    if ( stdstr.starts_with("help") ) {    //  here c++ more readable than !stdstr.rfind("help", 0) or with c strings !strncmp(cstr, "help", 4)
-      String peerstring = "";    // this is temporary todo redo this with const char* or std::string
+      //  Serial.printf("free heap: %u\n", ESP.getFreeHeap());
+      //  Serial.printf("psram found: %d free psram: %u\n", psramFound(), ESP.getFreePsram());
       
-      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
-      prefs.getBytes("peers", peers, size);    //  read peer list
-      if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
-      for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }    //  iterate over peers and add to peerstring
-      free(peers);
-
       ws.print("\n \n"
           "\nwhen wlan fails an access point spawns \n"
           " ssid 'ssid'         sets wlan '" + prefs.getString("ssid", "N.A.") + "' \n"
@@ -307,170 +330,20 @@ void wstas() {
           " debug 'level'       sets debug level '" + prefs.getString("debuglevel", "info") + "' \n"
           " restart             well this restarts \n"
           " apt upgrade 'link'  sets firmware url for next restart \n"
-          " rm -rf              chill this just clears preferences\n\n\n" ); return;
-    }
-    //if (msg.indexOf("slots ") == 0) {
-    //  prefs.putString("slotcount", msg.substring(6)); ws.print("'" + msg.substring(6) + "' slots available\n"); return;
-    //}
-
-    auto pos = stdstr.find(' '); 
-    if (pos != std::string::npos) {    //  this replaces a hole lot of ifelses
-        ws.putString(stdstr.substr(0, pos).c_str(), stdstr.substr(pos + 1).c_str());
-    }
+          " rm -rf              chill this just clears preferences\n\n\n" );
+    }}
+  };
 
 
-
-
-    static const std::set<std::string> validset{"ssid", "pass", "serv", "topic", "top", "sit", "debug", "airlink", "restart"};
+  ws.onMessage([&ws, &cmds](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
     auto pos = stdstr.find(' ');
-    auto valid = validset.find(stdstr.substr(0, pos));
-
-    if (validset.count(stdstr.substr(0, pos))) {
-        ws.putString(stdstr.substr(0, pos).c_str(), stdstr.substr(pos + 1).c_str());
+    auto it = cmds.find(stdstr.substr(0, pos));
+    if (it != cmds.end()) {
+      it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
+    } else {
+      ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
     }
-
-
-
-
-
-    if ( stdstr.starts_with("topic ") ) {
-      prefs.putString("mqtop", cstr + 6); ws.printf("mqtt topic set to %s\n", cstr + 6); return;
-    }
-    if ( stdstr.starts_with("debug ") ) {
-      prefs.putString("debuglevel", cstr + 6); ws.printf("debug level set to %s\n", cstr + 6); return;
-    }
-    if ( stdstr.starts_with("publ ") ) {
-      ws.print("this is disabled fix this");
-      //xQueueSend(sendmqttQueue, msg.substring(5).c_str(), 0); return;
-    }
-    if ( stdstr.starts_with("serv ") ) {
-      prefs.putString("mqserv", cstr + 6); ws.printf("mqtt server set to %s\n", cstr + 6); return;
-    }
-
-    // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
-
-    if ( stdstr.starts_with("peer ") ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
-
-
-    // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
-    //                        overwrite secret here for already known peers
-
-      size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
-
-      if (!peers) { ws.print("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
-
-      prefs.getBytes("peers", peers, size);    //  read peer list
-
-      strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
-
-      //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
-      
-      prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
-
-      uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-
-      prefs.putBytes( strcat(peers[size/16], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
-
-      free(peers);    //  free memory for peer list
-
-      ws.print("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
-
-
-      xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
-      xTaskNotifyGive(flanksTasHandle);
-
-    //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
-    //                        then convert to key (char array) with sprintf(buffer, "%u", number);    //  this gives a char array with the number in it to use as key
-    //char peerindexchar[10];
-    //uint32_t peerindexuint = 0;
-
-
-
-
-
-    //------------------------------
-      if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
-
-      //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
-
-      char i[] = { prefs.getUChar("peercount", '0') + 1 , '\0'};    //  read current peer count and add one
-      prefs.putUChar("peercount", i[0]);    //  put incremented peer count
-
-      prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
-
-      uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-
-      strcat(i, "hkdf");    //  adds hkdf to peer
-
-      prefs.putBytes(i, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'index + hkdf'
-      ws.print("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
-
-      /* -- debug helper to print hkdf result in hex TODO remove this
-      String chachaKeyHex;
-      for (size_t i = 0; i < sizeof(hkdfbuff); i++) {
-        if (hkdfbuff[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
-        chachaKeyHex += String(hkdfbuff[i], HEX);
-        if (i < sizeof(hkdfbuff) - 1) chachaKeyHex += " ";
-      }
-      ws.print("chacha key derived (hex): " + chachaKeyHex + "\n");
-      
-      uint8_t testbuff[32];
-      prefs.getBytes(nvsalias.c_str(), testbuff, sizeof(testbuff));   //  read back hkdf result from nvs to test if it worked
-      String testbuffHex;
-      for (size_t i = 0; i < sizeof(testbuff); i++) {
-        if (testbuff[i] < 0x10) testbuffHex += "0";  // Add leading zero for single digit hex
-        testbuffHex += String(testbuff[i], HEX);
-        if (i < sizeof(testbuff) - 1) testbuffHex += " ";
-      }
-      ws.print("readback derived (hex): " + testbuffHex + "\n");
-    // --------------------------
-
-    }
-    if ( stdstr.starts_with("ssid ") ) {
-      prefs.putString("ssid", cstr + 5); ws.printf("ssid set to '%s'\n", cstr + 5); return;
-    }
-    if ( stdstr.starts_with("pass ") ) {
-      prefs.putString("pass", cstr + 5); ws.printf("pass set to '%s'\n", cstr + 5); return;
-    }
-    if ( stdstr.starts_with("restart") ) {
-      ws.print("restarting esp"); ESP.restart();
-    }
-    if ( stdstr.starts_with("apt upgrade ") ) {
-      ws.print("restart to try with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
-      //ws.print("firmware link " + msg.substring(12) + " '\n" ); tryair( msg.substring(12) ); return;
-    }
-    if ( stdstr.starts_with("rm -rf") ) {
-      prefs.clear(); ws.print("cleared preferences"); return;
-    }
-    if ( stdstr.starts_with("top ") ) {
-      prefs.putInt("top", msg.substring(4).toInt()); xQueueSend(servoQueue, "top", 0); ws.print("top angle set to '" + msg.substring(4) + "'\n"); return;
-    }
-    if ( stdstr.starts_with("sit ") ) {
-      prefs.putInt("sit", msg.substring(4).toInt()); xQueueSend(servoQueue, "sit", 0); ws.print("sit angle set to '" + msg.substring(4) + "'\n"); return;
-    }
-    if ( stdstr.starts_with("info") ) {
-      char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); ws.print(nvsfree);
-      ws.print("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
-      ws.print("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
-      if(WiFi.getMode() == WIFI_MODE_AP) { ws.print("local ip " + WiFi.softAPIP().toString() + " \n"); }
-      if(WiFi.getMode() == WIFI_MODE_STA) { ws.print("local ip " + WiFi.localIP().toString() + " \n"); }
-      char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); ws.print(macStr);    //  this is so tiedious pls help me do not know how to string
-      ws.print("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
-      ws.print("| ---- | --- | -------- | -------- | ---------------- | \n");
-      esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
-      if (pi != NULL) {
-        do {
-          const esp_partition_t* p = esp_partition_get(pi);
-            char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); ws.print(buffer);    //  this sucks i hate strings i miss python
-        } while (pi = (esp_partition_next(pi)));
-      }
-      int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
-    }
-    ws.print("recived " + msg + " unknown try 'help' \n");
-
   });    //  attach message callback
-  */
-
 
   ws.begin(&server);    //  init webserial
 
@@ -478,7 +351,6 @@ void wstas() {
   server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
     char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
   });
-
 
   server.on("/file", HTTP_POST,
     [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
@@ -520,7 +392,8 @@ void wstas() {
   if ( MDNS.begin("fpaper") ) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
 
   server.begin();
-  
+
+
   if ( prefs.getBytesLength("airlink") || prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
     char airlink[256] = "";    //  instead of hardcoding the link here improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/fpaper/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/fpaper/tags' befor download and then use 'https://github.com/crbyxwpzfl/fpaper/releases/latest/download/not-merged-correct-board.bin'
     if ( prefs.getBytes("airlink", airlink, sizeof(airlink)) ) prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
@@ -540,6 +413,9 @@ void wstas() {
     ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
   }
 
+
+  //   ------- TODO ---------
+  //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
   uint32_t livetime = prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
@@ -556,9 +432,6 @@ void wstas() {
 
 
 
-TaskHandle_t showTasHandle;
-QueueHandle_t showQueue;
-struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };    //  handle and struct for show queue
 void showTas(void *parameter) {    //  this handles the epaper
   showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5
 
@@ -573,10 +446,7 @@ void showTas(void *parameter) {    //  this handles the epaper
   char ocupado[5];    //  save the screen state either user or empty
 
   while(true){
-    //if (!xQueueIsQueueEmptyFromISR( showQueue )){    //  just do sth when queue not empty
-    //if (!uxQueueMessagesWaiting( showQueue )){
-    //  showstct show; xQueueReceive(showQueue, &show, 0);
-    showstct show; if( xQueueReceive( showQueue, &show, 0 ) == pdPASS ) {
+    showstct show; if( xQueueReceive( showQueue, &show, 0 ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
 
       if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(showQueue, &show, 0); continue;
         Serial.println("did a pushback");
@@ -628,9 +498,8 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 
       display.hibernate();   //  hibernate display to save power
-    }
-    //vTaskDelay(1);    //  befor one second so no flicker just show every thing fast user interactions
-    taskYIELD();    //  more efficent vTaskDely(0)
+    };
+    taskYIELD();    //  more efficent vTaskDely(0)    //  befor one second so no flicker just show every thing fast user interactions
 
   }
 }
@@ -638,24 +507,16 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 
 
-//Preferences prefs;    //  commented so no redfinition error
-TaskHandle_t servoTasHandle;
-QueueHandle_t servoQueue;    //  handle for servo queue
 void servoTas(void *parameter) {    //  this handles servo movement
   servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
-  //char buff[] = "sit";    //  why does char buf[4] error help
   
   while(true){
-    //if(!xQueueIsQueueEmptyFromISR( servoQueue )){
-    //if(!uxQueueMessagesWaiting( servoQueue )){
-    //  xQueueReceive(servoQueue, &buff, 0);    //  just do sth when queue not empty
     char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {
       //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
       if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
       if (!strcmp(buff, "sit")) { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
     }
-    //vTaskDelay(1);
     taskYIELD();
   }
 }
@@ -663,78 +524,43 @@ void servoTas(void *parameter) {    //  this handles servo movement
 
 
 
-TaskHandle_t sendmqttHandle;
-QueueHandle_t sendmqttQueue;
-struct sendstct { char peer[16]; char load[16]; };
-void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
+void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
   sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
 
   PsychicMqttClient mqttClient;
   ChaChaPoly chachapoly;
 
-  static uint8_t curriv[12];    //  this is written every outgoing message and read with every incoming so perhaps protect this with mutex/semaphore 
+  static uint8_t sendcyphy[12+16+15000+9];    //  this is the last sent message the first 12iv plus 16tag plus 15000foto plus 9profile/slot    //  this is written every outgoing message and read with every incoming so perhaps protect this with mutex/semaphore 
 
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
-  /* deprecated this makes task local copy of peer list now we have one global peerlist
-  static size_t size = prefs.getBytesLength("peers");    //  size of peer list this is to clac peer count
-  static char (*peers)[16] = (char (*)[16]) malloc( size );    //  allocate memory for peer list
-  prefs.getBytes("peers", peers, size);    //  read peer list into memory
-  */
-
-
-  /* these are globally available now
-  static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
-  static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
-  static uint32_t slots = prefs.getUInt("slots", 0);
-  */
-
-
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
 
-    if ( !memcmp(curriv, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
+    if ( !memcmp(sendcyphy, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
 
     Serial.println("got message start decoding");    //  TODO make this debug
 
     static uint32_t index;    //  static initialises to zero also remember last successful peer index
 
-    //  do not use anymore since the hkdfs are global now
-    //static uint8_t rcvhkdf[32];    //  static to try message with previous successful peer first but this also cuases decryption to fail at first call
-
-    //uint8_t iv[12];  memcpy(iv, payload, 12); so stupid why would i copy this just pass the pointer directly
-    //uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
-    
-    static uint8_t rcvcyphy[15000];    //  perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
+    static uint8_t rcvcyphy[15000];    //  TODO perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
     static uint8_t temp[15000];     //  see comment abouveus
 
     Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
-    //for (uint8_t attempts = (size/16); attempts; attempts--) {       // a =  4, 3, 2, 1
-                                                                   // key =  x, 3, 2, 1
-    do {
-
-      //memcpy(rcvcyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
-
+    for (uint32_t attempts = hkdfs.size(); attempts; attempts--) {       // a =  4, 3, 2, 1
+                                                                       // key =  x, 3, 2, 1
+ 
       chachapoly.setIV( payload , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
       chachapoly.setKey( hkdfs[index].data() , 32);                             Serial.println(" set key");
       chachapoly.decrypt(rcvcyphy, payload + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
 
-      if (!chachapoly.checkTag( payload + 12, 16)) {
-        index++;
-        
-        //index = attempts -1;
-
-        //if ( index ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  read next peer hkdf.  when no peer matches this keeps first peer hkdf in memory but whatevs
-        continue;    //  retry
-      }
+      if (!chachapoly.checkTag( payload + 12, 16)) { index = attempts -1; continue; }    //  retry
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-        //sprintf(peers[0], "%sprofile", peers[index]); prefs.getBytes( peers[0], temp, 15000 );    //  use peer zero as scratch buffer here to read the profile of peer wich is at 'index+profile'
-        //char nvsalias[16]; sprintf(nvsalias, "%sprofile", peers[index]); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
-        char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
+        char nvsalias[16]; sprintf(nvsalias, "%sprofile", peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
+        //char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
         //prefs.getBytes( std::format("{}profile", peers[index]).c_str(), temp, 15000 );
-
 
         Serial.println("first decryption successfull");
 
@@ -746,7 +572,6 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
-        //sprintf(peers[0], "%slatest", peers[index]); prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  use peer zero as scratch buffer here to save foto of peer wich is 'index+latest'
         char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%slatest", peers[index].data()); prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  save foto of peer wich is 'peer+latest' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
 
         Serial.println("second decryption successfull");
@@ -755,77 +580,42 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       }
 
       chachapoly.clear(); return;    //  exit lambda
-    } while (index);
+    }
   });
 
   mqttClient.connect();
 
-  uint8_t sendhkdf[32];
-  static uint8_t sendcyphy[15000];    //  this hold load wich then gets encrypted and sent
-  uint8_t sendtag[16];
 
   while (true) {
-
-    /*
-    if ( ulTaskNotifyTake(pdTRUE, 0) ) { //reload peer list when notified by other tasks
-
-      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
-      if (!peers) { Serial.println("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
-
-      prefs.getBytes("peers", peers, size);    //  read peer list into memory
-
-
-      // ---------- TODO -------------
-      //  also load all hkdfs into memory for decryption in .ontopic here this would be faster but also use more memory
-    }
-    */
-
-
-    //if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
-    //if(!uxQueueMessagesWaiting( sendmqttQueue )){    //  just do sth when queue not empty
-    //  sendstct send; xQueueReceive(sendmqttQueue, &send, 0);
     sendstct send; if( xQueueReceive( sendmqttQueue, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
-      //if (!seenecho) { feedlog("no wait for echo"); continue;}    //  do not pop queue when last messages echo was not seen do not push back into queue to preserved sequence   // optimization this technicaly doe not have to wait on local sends
+      Serial.println("sending to " + String(peers[send.peer].data()) );
 
-      Serial.println("sending to " + String(send.peer));
+      if (!prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
 
-      if (!prefs.getBytes( send.load, sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
-
-      //if ( !(send.peer[0]-'0') ) {    //  local is "0" so falsy
-      if ( !strcmp(send.peer, "local") ) {    //  when recipient local just save to local latest
-        prefs.putBytes( "locallatest", sendcyphy, sizeof(sendcyphy));    //  when recipient local save to local latest
+      if ( !send.peer ) {    //  when recipient local just save to local latest
+        prefs.putBytes( "locallatest", sendcyphy, 15000);    //  when recipient local save to local latest
       }
 
-      //if ( send.peer[0]-'0' ) {    //  here when recipient not local actually do send stuff either answer to look here with profile or send profile plus volatileShow    // TODO somehow dont send full profile everytime you want to annoy
-      else {        //  here when recipient not local actually do send stuff
-        uint8_t *payload = (uint8_t*)malloc(sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy) + 9);    //  allocate memory for payload
-      
-        esp_fill_random(curriv, sizeof(curriv));    //  fill curriv with noise here this only is to later in recieve mqtt determine wether message is a echo
-        //seenecho = false;    //  reset echo flag
+      else {        //  here when recipient not local actually do send stuff    // TODO somehow dont send full profile everytime you want to annoy
+        esp_fill_random(sendcyphy, 12);    //  fill first 12 bytes of sendcyphy with noise to use as iv for chachapoly also to later in recieve mqtt determine wether message is a echo
 
-        prefs.getBytes( strcat(send.peer, "hkdf") , sendhkdf, 32);    //  find the peer hkdf
+        chachapoly.setIV(sendcyphy, 12);    //  use first 12 bytes of sendcyphy as iv
+        chachapoly.setKey(hkdfs[send.peer].data(), 32);    //  
+        chachapoly.encrypt( 12+16+sendcyphy, 12+16+sendcyphy, 15000);    //  encrypt clear bytes of load this was loaded into cyphy befor
 
-        chachapoly.setIV(curriv, 12);
-        chachapoly.setKey(sendhkdf, 32);
-        chachapoly.encrypt(sendcyphy, sendcyphy, 15000);    //  encrypt clear bytes of load this was loaded into cyphy befor
-
-        chachapoly.computeTag(sendtag, 16);
+        chachapoly.computeTag( 12+sendcyphy, 16);
         chachapoly.clear();
 
-        memcpy(payload, curriv, sizeof(curriv));    //  pack payload with first iv
-        memcpy(payload + sizeof(curriv), sendtag, sizeof(sendtag));    //  then tag
-        memcpy(payload + sizeof(curriv) + sizeof(sendtag), sendcyphy, sizeof(sendcyphy));    //  then foto
-        memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "0profile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
+        memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        Serial.println("packed payload try sending now to " + String(send.peer));    //  TODO make this a feedlog message
+        memcpy(12 + 16 + 15000, strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        mqttClient.publish( prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(payload), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
+        Serial.println("packed payload try sending now to " + String(peers[send.peer].data()) );    //  TODO make this a feedlog message
 
-        free(payload);
+        mqttClient.publish( prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(sendcyphy), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
-
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this blocks the task until notivied or timeout runs out this is to filter echos
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this blocks the task until notivied or timeout runs out this is to filter echos  // TODO optimization this technicaly doe not have to wait on local sends
         else { Serial.println("timeout waiting for echo\n"); }    //  TODO make this a debug log
 
       }
@@ -837,321 +627,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
 
 
-/* moved dnsServTas() to network tasks
-TaskHandle_t dnsServHandle;
-void dnsServTas(void *parameter) {    //  this is the dns response task this only is called in ap mode
-  DNSServer dnsServer;
-  dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
-  while(true){
-    dnsServer.processNextRequest();
-    feedlog("dns for ap mode", "debug");
-    //vTaskDelay(10);
-    taskYIELD();
-  }
-}
-*/
 
-
-/* moved tryair() to wstas()
-void tryair(String airlink) {    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699' improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/mini/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/mini/tags' befor download and then use 'https://github.com/crbyxwpzfl/mini/releases/latest/download/adafruit-feather-esp32s3-4flash-2psram.bin'
-  WiFiClientSecure secureClient;
-  HTTPUpdate up;
-
-  if( airlink ) {    //  only do this when airlink has value
-    prefs.putString("airlink", "");    //  disable airlink for next boot
-    //String airlink = prefs.getString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin"); prefs.putString("airlink", "https://github.com/crbyxwpzfl/mini/releases/download/v9/adafruit-feather-esp32s3-4flash-2psram.bin" );  //  usually try fixed link or try custom link only once
-    secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
-    up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
-    up.onStart([]() { feedlog("overwrite firmware init download \n"); });
-    up.onEnd([]() { feedlog("firmware download success so restart to overwrite \n"); });
-    up.onError([&up](int err) { feedlog(  up.getLastErrorString() + " \n"); });
-    up.onProgress([](int current, int total) { feedlog(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
-    HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
-  }
-  feedlog("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");    //  usually auto restart prevents this line so just prints when no restart cause error
-}
-*/
-
-
-/* moved watermark to wstas()
-TaskHandle_t watermarkHandle;
-void printWatermarkTas(void *count){
-  int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
-  for (int i = 0; i < iter; i++) {
-      feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "'\n");
-      vTaskDelay(1000);
-  }
-  feedlog("\n\n");
-  vTaskDelete(watermarkHandle);
-}
-*/
-
-
-/* moved recv() to wstas()
-void recv( String msg ){    //  this uses string likely char array is better see https://github.com/asjdf/WebSerialLite/blob/545465b009a06a4a7d2da4247c9af2a821391beb/examples/demo/demo.ino#L27
-  if ( msg.indexOf("help") >= 0 ) {
-    String peerstring = "";
-    
-    size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size );
-    prefs.getBytes("peers", peers, size);    //  read peer list
-    if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
-    for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }    //  iterate over peers and add to peerstring
-    free(peers);
-
-    //char i[2] = {'0', '\0'}; while (prefs.isKey(i)) {
-      //peerstring += String(i) + "-" + prefs.getString(i, "N.A.") + " ";
-      //i[0]++;
-    //}
-
-    feedlog("\n \n"
-         "\nwhen wlan fails an access point spawns \n"
-         " ssid 'ssid'         sets wlan '" + prefs.getString("ssid", "N.A.") + "' \n"
-         " pass 'password'     sets password \n"
-                                
-         "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
-         " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
-         " serv 'mqtt://url'    sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
-         " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
-         //" slots 'count'        sets the available slots '" + prefs.getString("slotcount", "4") + "' \n"
-
-         "\nservo config. please take finger off before \n"
-         " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
-         " sit  'servo pos'    sets sit pos '"  + prefs.getInt("sit", 0) + "' \n"
-
-         "\nother stuff \n"
-         " help                prints this\n"
-         " info 'seconds'      see some info \n"
-         " publ 'text'         publish to mqtt \n"
-         " debug 'level'       sets debug level '" + prefs.getString("debuglevel", "info") + "' \n"
-         " restart             well this restarts \n"
-         " apt upgrade 'link'  sets firmware url for next restart \n"
-         " rm -rf              chill this just clears preferences\n\n\n" ); return;
-  }
-  //if (msg.indexOf("slots ") == 0) {
-  //  prefs.putString("slotcount", msg.substring(6)); feedlog("'" + msg.substring(6) + "' slots available\n"); return;
-  //}
-  if (msg.indexOf("topic ") == 0) {
-    prefs.putString("mqtop", msg.substring(6)); feedlog("mqtt topic set to '" + msg.substring(6) + "'\n"); return;
-  }
-  if (msg.indexOf("debug ") == 0) {
-    prefs.putString("debuglevel", msg.substring(6)); feedlog("debug level set to '" + msg.substring(6) + "'\n"); return;
-  }
-  if (msg.indexOf("publ ") == 0) {
-    feedlog("this is disabled fix this");
-    //xQueueSend(sendmqttQueue, msg.substring(5).c_str(), 0); return;
-  }
-  if ( msg.indexOf("serv ") == 0 ) {
-    prefs.putString("mqserv", msg.substring(5)); feedlog("mqtt server set to '" + msg.substring(5) + "'\n"); return;
-  }
-
-  // -------- TODO --------- add function to delete slot   just overwrite the slot with the top most slot and update slotcount and restart
-
-  if ( msg.indexOf("peer ") == 0 ) {    //  this adds peer name to nvs with ASCII index so that its easy to iterate over peers also this does hkdf with secret and puts it into nvs with 'peer name + hkdf'
-
-
-  // --------- TODO-------  when secret empty delete peer   delete all keys for peer like indexhkdf, indexprofile, index, indexlatest!   then move topmost peer to the index of deleted peer to keep iterable structure
-  //                        overwrite secret here for already known peers
-
-
-
-
-  //                        DO EVERYTHING WITH LISTS ISTEAD OF ASCII INDEXES
-  //                      - but this would add complexety of malloc when ever we have to access the peers
-  //                      + would sepperate all other keys for peers like hkdf, profile, latest from the index itself so no need to rewrite them for peer deletion
-  //                      - requires more nvs reads one for size and one for data
-
-    size_t size = prefs.getBytesLength("peers"); char (*peers)[16] = (char (*)[16]) malloc( size +16 );    //  allocate memory for peer list
-
-    if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
-
-    prefs.getBytes("peers", peers, size);    //  read peer list
-
-    strncpy(peers[size/16], msg.substring(5, msg.indexOf(" ", 5)).c_str(), 15);    //  add peer
-
-    //peers[size/16 - 1] = msg.substring(msg.indexOf(" ", 5)+1).c_str();    //  add new peer to end of list
-    
-    prefs.putBytes("peers", peers, size+16);    //  write back peer list with new peer
-
-    uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-
-    prefs.putBytes( strcat(peers[size/16], "hkdf"), hkdfbuff, sizeof(hkdfbuff));    //  write back peer list with new peer
-
-    free(peers);    //  free memory for peer list
-
-    feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
-
-
-    xTaskNotifyGive(sendmqttHandle);    //  notify other tasks to reload peer list
-    xTaskNotifyGive(flanksTasHandle);
-
-  //                        perhaps its just better to switch to uint32 enumeration this is infinite enough
-  //                        then convert to key (char array) with sprintf(buffer, "%u", number);    //  this gives a char array with the number in it to use as key
-  //char peerindexchar[10];
-  //uint32_t peerindexuint = 0;
-
-
-
-
-
-   // ----------------------------
-    if (!prefs.isKey("0")) prefs.putString("0", "local");    //  when local peer not found do initialise local here
-
-    //  this limits peer count to dec 48/ASCII 0 to dec 126/ASCII ~     //  theoretically with for esp32 platform this could do dec 0/ASCII NULL to dec 255/ASCII nbsp see here https://forum.arduino.cc/t/char-is-not-signed-no-reference-in-the-documentation/1297470
-
-    char i[] = { prefs.getUChar("peercount", '0') + 1 , '\0'};    //  read current peer count and add one
-    prefs.putUChar("peercount", i[0]);    //  put incremented peer count
-
-    prefs.putString(i, msg.substring(5, msg.indexOf(" ", 5)));    //  put alias into nvs with ASCII index this will overwrite peers when ASCII rolesover
-
-    uint32_t hkdfbuff[32]; hkdf<SHA256>( hkdfbuff, 32, msg.substring(msg.indexOf(" ", 5)+1).c_str(), msg.substring(5).length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-
-    strcat(i, "hkdf");    //  adds hkdf to peer
-
-    prefs.putBytes(i, hkdfbuff, sizeof(hkdfbuff));    //  store hkdf result in nvs under 'index + hkdf'
-    feedlog("added '" +  msg.substring(5, msg.indexOf(" ", 5)) + "' with '" + msg.substring(msg.indexOf(" ", 5)+1) + "'"); return;
-
-    /* -- debug helper to print hkdf result in hex TODO remove this
-    String chachaKeyHex;
-    for (size_t i = 0; i < sizeof(hkdfbuff); i++) {
-      if (hkdfbuff[i] < 0x10) chachaKeyHex += "0";  // Add leading zero for single digit hex
-      chachaKeyHex += String(hkdfbuff[i], HEX);
-      if (i < sizeof(hkdfbuff) - 1) chachaKeyHex += " ";
-    }
-    feedlog("chacha key derived (hex): " + chachaKeyHex + "\n");
-    
-    uint8_t testbuff[32];
-    prefs.getBytes(nvsalias.c_str(), testbuff, sizeof(testbuff));   //  read back hkdf result from nvs to test if it worked
-    String testbuffHex;
-    for (size_t i = 0; i < sizeof(testbuff); i++) {
-      if (testbuff[i] < 0x10) testbuffHex += "0";  // Add leading zero for single digit hex
-      testbuffHex += String(testbuff[i], HEX);
-      if (i < sizeof(testbuff) - 1) testbuffHex += " ";
-    }
-    feedlog("readback derived (hex): " + testbuffHex + "\n");
-    // -----------------------------------
-
-  }
-  if ( msg.indexOf("ssid ") == 0 ) {
-    prefs.putString("ssid", msg.substring(5)); feedlog("ssid set to '" + msg.substring(5) + "'\n"); return;
-  }
-  if ( msg.indexOf("pass ") == 0 ) {
-    prefs.putString("pass", msg.substring(5)); feedlog("pass set to '" + msg.substring(5) + "'\n"); return;
-  }
-  if ( msg.indexOf("restart") == 0 ) {
-    feedlog("restarting esp"); ESP.restart(); return;
-  }
-  if ( msg.indexOf("apt upgrade ") == 0 ) {
-    feedlog("'restart' to init upgrade with '" + msg.substring(12) + " '\n" ); prefs.putString("airlink", msg.substring(12)); return;
-    //feedlog("firmware link " + msg.substring(12) + " '\n" ); tryair( msg.substring(12) ); return;
-  }
-  if ( msg.indexOf("rm -rf") == 0 ) {
-    prefs.clear(); feedlog("cleared preferences"); return;
-  }
-  if ( msg.indexOf("top ") == 0 ) {
-    prefs.putInt("top", msg.substring(4).toInt()); xQueueSend(servoQueue, "top", 0); feedlog("top angel set to '" + msg.substring(4) + "'\n"); return;
-  }
-  if ( msg.indexOf("sit ") == 0 ) {
-    prefs.putInt("sit", msg.substring(4).toInt()); xQueueSend(servoQueue, "sit", 0); feedlog("sit angle set to '" + msg.substring(4) + "'\n"); return;
-  }
-  if ( msg.indexOf("info") == 0 ) {
-    char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); feedlog(nvsfree);
-    feedlog("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
-    feedlog("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
-    if(WiFi.getMode() == WIFI_MODE_AP) { feedlog("local ip " + WiFi.softAPIP().toString() + " \n"); }
-    if(WiFi.getMode() == WIFI_MODE_STA) { feedlog("local ip " + WiFi.localIP().toString() + " \n"); }
-    char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); feedlog(macStr);    //  this is so tiedious pls help me do not know how to string
-    feedlog("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
-    feedlog("| ---- | --- | -------- | -------- | ---------------- | \n");
-    esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
-    if (pi != NULL) {
-      do {
-        const esp_partition_t* p = esp_partition_get(pi);
-          char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); feedlog(buffer);    //  this sucks i hate strings i miss python
-      } while (pi = (esp_partition_next(pi)));
-    }
-    int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
-  }
-  feedlog("recived " + msg + " unknown try 'help' \n");
-}
-*/
-
-
-/* moved initwebserial to wstask()
-AsyncWebServer server(80);
-void initWebSerial() {    //  either spwan ap or connect to wlan and init webserial
-  
-  //----------- moved to its own task ------------
-  WiFi.mode(WIFI_STA);
-  WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
-  if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  not able to connect to ssid from nvs so fall back to ap
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("fpaper", "");
-    feedlog(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
-    xTaskCreate( dnsServTas, "dnsServ", 2048, NULL, 1, &dnsServHandle );    //  begin dns serv 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
-  }
-  if (WiFi.waitForConnectResult() == WL_CONNECTED) {    //  all good connected to ssid from nvs
-    feedlog(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
-  }
-  // ----------------------
-
-
-  WebSerial.onMessage([](const std::string& msg) { recv(msg.c_str()); });    //  attach message callback
-
-  WebSerial.begin(&server);    //  init webserial
-
-
-  server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
-    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
-  });
-
-
-  server.on("/file", HTTP_POST,
-    [](AsyncWebServerRequest* request) {},    // empty request handler - no response sent
-    [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
-    static size_t totalSize = 0;    //  static so this is not reset on each chunck
-    static char slot[12];    // static to persist across chunks this max is 'profile'
-    static uint8_t rcvbuff[15000];    // static buffer allocated once
-
-    if (!index){
-      totalSize = request->header("Content-Length").toInt();
-      strncpy(slot, request->getParam("slot")->value().c_str(), 8);    //  max copy eight chars for 'profile' here
-      feedlog("file is for slot " + String(slot));
-    }
-    if (len + index > sizeof(rcvbuff)) {
-      feedlog("aw thats to grande for me"); return;    //  this is to prevent buffer overflow
-    }
-    else if (len) {
-      feedlog("file " + filename + " " + String(index + len) + "/" + String(totalSize) + " bytes\r\n");
-      memcpy(rcvbuff + index, data, len);    //  copy data to volatile buffer
-    }
-    if (final){    //  just save the recieved buffer to nvs
-      //prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
-      //feedlog("file saved to " + String(slot));
-      
-      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
-      feedlog("file saved to " + String(slot));
-      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
-        prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
-        xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots
-        feedlog("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
-      }
-    }
-  });
-
-
-  server.onNotFound([](AsyncWebServerRequest* request) {    //  redirect all requests to webserial for captive portal request->redirect("/webserial"); does not work for captive portal
-    request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
-  });
-  server.begin();
-
-  //if (MDNS.begin("fpaper")) { feedlog("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
-}
-*/
-
-
-
-//TaskHandle_t flanksTasHandle;
-void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default Asynchronous
+void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default asynchronous
 //void initflanks(){
 
   //static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
@@ -1162,43 +639,18 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   static volatile uint32_t lastpress = 0;
 
-  //static const uint16_t slotcount = prefs.getUShort("slotcount", 8);    //  TODO replace with prefs.getUShort("slotcount", 4); and also update site accordingly in the future
-  //static char slotcount = prefs.getUChar("slotcount", '8');
-  //static char slots = prefs.getUInt("slots", 0);
-  static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count
-
-  static size_t size = prefs.getBytesLength("peers");    //  size of peer list this is to clac peer count
-
-  //static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
-  static char (*peers)[16] = (char (*)[16]) malloc( size );    //  allocate memory for peer list
-
-  prefs.getBytes("peers", peers, size);    //  read peer list into memory
-
-  //static char prep[] = {'0'+slotcount, '\0'};    //  initially perp last slot so first increment shows peer
-  //static char prep[] = {slotcount, '\0'};    //  initially perp last slot so first increment shows peer
-
   static uint32_t prep = slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
 
-  //static char currpeer[] = "0";    //  initially peer is local
   static uint32_t currpeer;    //  initially peer is local static initialises to zero
+
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
 
-    /*
-    if (!peers) {
-      slots = prefs.getUInt("slots", 0);    //  reload slot count for first press after timeout
-
-      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
-      if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  check if malloc worked
-      prefs.getBytes("peers", peers, size);    //  read peer list into memory
-    }     //  when no peers allocate memory for peer list
-    */
-
-    lastpress = millis(); if (lastpress == 0) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
+    lastpress = millis(); if (!lastpress) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
 
     prep = ++prep % (slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
+      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
 
       Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
@@ -1209,135 +661,70 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
 
     }
-
-
-
-     /*
-    slotcount = prefs.getUChar("slotcount", '8');
-
-    prep[0] = '0' + ((++prep[0] - '0') % (slotcount  - '0' +2));    //  cycle trough eight slots plus one for current peer           
-    if (prep[0] > slotcount ) {
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
-
-      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
-
-    }
-    else {
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sslot", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
-
-      feedlog("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
-
-    }
-    */
   });
+
 
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
 
-    if ( ulTaskNotifyTake(pdTRUE, 0) ) { //reload peer list when notified by other tasks
-      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
-      slots = prefs.getUInt("slots", 0);    //  reload slot count
-
-      size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
-      if (!peers) { Serial.println("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
-
-      prefs.getBytes("peers", peers, size);    //  read peer list into memory
-    }
-    
     if ( lastpress && (millis() - lastpress > 2000)) {    //  when no press for two seconds actually do the stuff here
       lastpress = 0;    //  disarm this until real press
 
       if (!prep) {    //  when prep is a peer
         //currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
         currpeer = ++currpeer % (size/16);    //  advance peer or wrap
-        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
+        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
       }
       else {    //  when perep is a foto slot
-        if (currpeer) { struct sendstct sendprofile={ "", "localprofile" }; strcpy(sendprofile.peer, peers[currpeer]); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
-        struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
+        //if (currpeer) { struct sendstct sendprofile={ "", "localprofile" }; strcpy(sendprofile.peer, peers[currpeer]); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
+        if (currpeer) { struct sendstct sendprofile{ currpeer, "localprofile" }; xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
+        //struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
+        struct sendstct sendload{ currpeer, ""}; sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
       }
-      //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
 
       //vTaskDelay(1);    //  wait some time to let send finish and then show
-
       // TODO this comes to fast so dely this some how or move this line into send task
-      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer]); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
-    
+      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh    
 
       prep = slots;
-      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
-      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
-
-      /*
-      if (prep[0] > slotcount ) {    //  when prep is a peer
-        currpeer[0] = '0' + ((++currpeer[0] - '0') % (prefs.getUChar("peercount", '0') - '0' + 1));    //  advance peer or wrap. the literal '0' here is the ASCII offset since all this uses ASCII enumeration
-        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", currpeer); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
-      }
-      else {    //  when perep is a foto slot
-        if (currpeer[0]-'0') { struct sendstct sendprofile={ "", "0profile" }; strcpy(sendprofile.peer, currpeer); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not never to local
-        struct sendstct sendload={ "", "" }; strcpy(sendload.peer, currpeer); sprintf(sendload.load, "%sslot", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
-      }
-      //prep[0] = '0'+slotcount;    // reset prep so next time current peer shows up with first press
-      prep[0] = slotcount;
-
-      vTaskDelay(500);    //  wait some time to let send finish and then show
-      // TODO this comes to fast so dely this some how or move this line into send task
-      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", currpeer); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh
-    
-      feedlog("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));
-      */
+      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));    // todo make this debug
     }
-
-    //vTaskDelay(1);
     taskYIELD();
   }
-
-      //   ------- TODO ---------
-      //   restructure async queses to use structs and TRY TO REMOVE STRINGS where possible eg prep should be char[] or string (not String) i think
-      //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
-      //   package falnk into its own task perhaps this is not a good idea but it seems more consice with the rest of this and likely the lib does the same thing i think perhaps chekc this and perhaps use hybrid mode instead of syncronous wit own rtos task
-      //   test if this (event key press) resets for multible key presses or if this fires multible times
-      //   belowus.bind(Event_KeyPress, [](){    //  feedlog inside here does chrash perhaps this is 'm_RTOSservicerStackDepth' see here https://github.com/rwmingis/InterruptButton/tree/main?tab=readme-ov-file#known-limitations
 }
 
 
 
 
 void setup() {    //  when this int main() instead this does not compile
+  
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
   prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
-  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to handle all network related stuff
+
+
+  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to connect to wifi
 
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
 
-  //initWebSerial();   //  init wifi and webserial this is blocks until wifi is up
-
-  //tryair(prefs.getString("airlink", ""));    //  TODO this should be a command thing to an auto thing try to upgrade firmware from hardcoded url fails in ap mode this blocks aswell
+  xTaskCreate( wstas, "wstas", 32768, NULL, 1, &wstasHandle );    //  spawn web task to handle all web stuff
 
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
 
   xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
 
   xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
-  //initflanks();    //  this is asnyc per lib so no xTaskCreate nessesary
 
 
-  //initmqtt();    //  init mqtt this is asnyc per lib so no xTaskCreate nessesary
-
-
+  // TODO MOVE THIS into wstas
   if(!prefs.getBytesLength("peers")) { const char def[][16] = {{"local"}}; prefs.putBytes("peers", def, sizeof(def)); }
 
+
+
   Serial.println("init done");
-
-  //delay(500);
-
-  //xQueueSend(showQueue, "fulllocalL", 0); // WHY DOES THIS NOT WORK????
-
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
-  //xQueueSend(showQueue, "showboot", 0);    //  add volatile foto to show queue
 }
 
 

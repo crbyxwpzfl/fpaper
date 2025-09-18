@@ -632,7 +632,7 @@
     const region = document.getElementById('region');
     const ditheredOverlay = document.getElementById('ditheredOverlay');
     const peerButtonsContainer = document.getElementById('peerButtonsContainer');
-    // Dynamic slots obtained from /querySlots. Response returns highest index (e.g. "5" -> 5 4 3 2 1 0 profile)
+    // Dynamic slots obtained from /querySlots. Response returns highest index (e.g. "5" -> 5 4 3 2 1 profile)
     let slots = [];
     let slotsLoading = false; // prevent overlapping slot queries
     function querySlots(){
@@ -653,7 +653,7 @@
             console.log('Slots updated:', slots.join(' '));
           })
           .catch(err => {
-            console.error('Failed to query slots; using fallback 7..0 + profile', err);
+            console.error('Failed to query slots; using fallback 7..1 + profile', err);
             const fallback = [];
             // Fallback also 1-based (7..1)
             for(let i = 7; i >= 1; i--) fallback.push(i.toString());
