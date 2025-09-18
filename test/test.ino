@@ -112,6 +112,15 @@ TaskHandle_t wsTasHandle;
 QueueHandle_t logsQueue;
 struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
 void wstas() {
+
+  // -------- TODO -----------
+  // load the peers and hkdfs vectors from nvs
+  // if not found initialize them with local peer and garbage for hkdf[0]
+  // this is required for iterations over these vectors in mqtt task or flanks task !!!!!
+
+
+
+
   logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
 
   static uint8_t prefsverbosity = 0; // TODO add verbosity command with nvs
@@ -628,18 +637,6 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 
 
-/* moved feedlog() to wstas()
-WebSerial WebSerial;  //  first delclartion of webserial not static anymore since v8.0.0
-//Preferences prefs;    //  commented so no redfinition error
-void feedlog(String text, String level = "info") {    //  print to serial and webserial and forward led feedback to ledTas
-  if (prefs.getString("debuglevel", "info") == level || level == "info" ) { 
-    Serial.print(text);    // TODO add \r\n here so each line is printed correctly
-    WebSerial.print(text.c_str()); 
-  }    //  always print info and just debug when debug level
-}
-*/
-
-
 
 //Preferences prefs;    //  commented so no redfinition error
 TaskHandle_t servoTasHandle;
@@ -680,152 +677,85 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
-  //static bool seenecho;    //  otherwise echo rejection is racey  todo rewrite this with proper portMUX and a ring with timestaps to allow multiple messages and invalidate old ivs currently this only allows one message and waits for its echo
-
-
+  /* deprecated this makes task local copy of peer list now we have one global peerlist
   static size_t size = prefs.getBytesLength("peers");    //  size of peer list this is to clac peer count
-
   static char (*peers)[16] = (char (*)[16]) malloc( size );    //  allocate memory for peer list
-
   prefs.getBytes("peers", peers, size);    //  read peer list into memory
+  */
+
+
+  /* these are globally available now
+  static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
+  static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
+  static uint32_t slots = prefs.getUInt("slots", 0);
+  */
 
 
   mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
-    
-
-    //  ------------ TODO -----------
-    //  instead of filtering echos with curriv here perhaps add currive as mqtt topic and unsub from this topiv until next send
-    //  potential issue is unsbub may takes some time
-    //                  how would i resub
-    //  this does not seem to be a good solution
-    //
-    //  i really want to avoid setting a permanent sender id so the conversation stays anonymous yes server has id but every other client does not get this id
-    //
-    //  perhaps collect ivs in a black-list and filter with this
-    //    seems wastefull and also time consuming
-    //
-    //  also the curriv method is racey when sending multiple messages in a short time
-
-
-    // ZERO CURRIV HERE!! does this even make sense? null iv still is a valid iv i guess so is as likely as any other iv
-    //if ( !memcmp(curriv, payload, 12) ) { seenecho = true; memcpy( curriv, NULL) return;}    //  ignore echos just listen to messages of our peers no sens to decode echos  TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
-    
 
     if ( !memcmp(curriv, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
 
-
     Serial.println("got message start decoding");    //  TODO make this debug
-    //char peer[16] = "0hkdf";    //  initally start with local hkdf so while trying all peers just increment the '0' literal
-
-    //static char (*peers)[16] = NULL;    //  this is a pointer to an array of char arrays with length 16
 
     static uint32_t index;    //  static initialises to zero also remember last successful peer index
 
-    //uint8_t retry = 1;    //  allow retry for every call
+    //  do not use anymore since the hkdfs are global now
+    //static uint8_t rcvhkdf[32];    //  static to try message with previous successful peer first but this also cuases decryption to fail at first call
 
-    // ------------ TODO -----------
-    //  optimization possibly  reload peer list only after we tried all peers and found no sender
-    //                         remember last successful peer and try that first
-    //                         both of the above dont neccessarily make sense together !!
+    //uint8_t iv[12];  memcpy(iv, payload, 12); so stupid why would i copy this just pass the pointer directly
+    //uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
     
-    //char peercount = prefs.getUChar("peercount");
-    //static size_t size;    //  this is size of the peer list to calculate the count of peers
-
-    static uint8_t rcvhkdf[32];    //  static to try message with previous successful peer first but this also cuases decryption to fail at first call
-    uint8_t iv[12];  memcpy(iv, payload, 12);
-    uint8_t rcvtag[16];   memcpy(rcvtag, payload + 12, 16);
-    static uint8_t rcvcyphy[15000];    //  this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
+    static uint8_t rcvcyphy[15000];    //  perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
     static uint8_t temp[15000];     //  see comment abouveus
 
     Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
-    //while (peer[0] < peercount) {    //  iterate over all peers to find whos sender
-    //while ( retry || index ) {    //  iterate over all peers to find whos sender plus allow one complete retry with reloaded peer list
-    //for (uint8_t attempts = 0; attempts < (size/16 - 1); attempts++) {    //  iterate over all peers to find whos sender
-    //for (uint8_t attempts = 1; attempts < (size/16) + 1; attempts++) {    //  iterate over all peers to find whos sender
-    for (uint8_t attempts = (size/16); attempts; attempts--) {       // a =  4, 3, 2, 1
+    //for (uint8_t attempts = (size/16); attempts; attempts--) {       // a =  4, 3, 2, 1
                                                                    // key =  x, 3, 2, 1
-    
-      //for (uint8_t attempts = 0; attempts < (size/16); attempts++) { // a  = 0, 1, 2, 3
-                                                                    // key = x, 0, 1, 2 
-                                                               // (new)key = x, x, 1, 2
-                                                            // (newnew)key = x, 1, 2, 3
-      
-      // ----------- TODO ----------- this for loop and the on failure handleing have to be rethought! perhaps do stuff on success instead and revise the logic
-      
-      
-      //peer[0]++;    //  peer initialises to '0hkdf' so just increment pos 0 here
+    do {
 
-      /*
-      if (!index) {    //  reload peer list when no sender found after trying all peers
-    
-        //reload peer list    peers[16][] =  {{"peer0"},{"peer1"},{"peer2"},{} ... }
-        //free(peers); peers = NULL;    //  free memory for peer list and set pointer to null so malloc works
-        //size = prefs.getBytesLength("peers"); peers = (char (*)[16]) malloc( size );
-        //if (!peers) { feedlog("failed to allocate memory for peers\n"); return; }    //  check if malloc worked
+      //memcpy(rcvcyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
 
-        size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
-        if (!peers) { feedlog("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
+      chachapoly.setIV( payload , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
+      chachapoly.setKey( hkdfs[index].data() , 32);                             Serial.println(" set key");
+      chachapoly.decrypt(rcvcyphy, payload + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
 
-        prefs.getBytes("peers", peers, size);    //  read peer list into memory
-        retry=0;    //  just one retry per message otherwise infinite loop
-      }
-      */
+      if (!chachapoly.checkTag( payload + 12, 16)) {
+        index++;
+        
+        //index = attempts -1;
 
-
-      //prefs.getBytes(peer, rcvhkdf, 32);    //  read incremented peer hkdf into buffer
-
-      memcpy(rcvcyphy, payload + 12 + 16, 15000);    //  load original message every try this is located after iv and tag and is 15000 bytes long
-
-      chachapoly.setIV(iv, 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
-      chachapoly.setKey(rcvhkdf, 32);                             Serial.println(" set key");
-      chachapoly.decrypt(rcvcyphy, rcvcyphy, 15000);                 Serial.println(" decrypted cypher text");
-
-      if (!chachapoly.checkTag(rcvtag, 16)) {
-        //index = ++index % ((size/16) + 1);    //  when decryption fails increment peer
-        //index = ++index % (size/16);    //  when decryption fails increment peer
-        //index++; if (index > (size/16) - 1) index = 1;    //  when decryption fails increment peer
-
-        //if(!attempts) index = 1;
-        //else index = attempts +1;
-
-        //index = (attempts) ? attempts+1 : 1;
-
-        index = attempts -1;
-
-        //index = attempts;
-
-        //if ( index < (size/16) ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  only read incremented peer hkdf for valid indices
-        if ( index ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  read next peer hkdf.  when no peer matches this keeps first peer hkdf in memory but whatevs
+        //if ( index ) prefs.getBytes(peers[index], rcvhkdf, 32);    //  read next peer hkdf.  when no peer matches this keeps first peer hkdf in memory but whatevs
         continue;    //  retry
       }
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-        //prefs.getBytes( strcpy(&peer[1], "profile"), temp, 15000 );    //  peer char array here still is  'index+hkdf' so make it 'index+profile' here and read the profile into temp to compare with message
-        //prefs.getBytes( strcat( peers[index], "profile" ), temp, 15000);    //  this permanently adds 'profile' 
-        sprintf(peers[0], "%sprofile", peers[index]); prefs.getBytes( peers[0], temp, 15000 );    //  use peer zero as scratch buffer here to read the profile of peer wich is at 'index+profile'
+        //sprintf(peers[0], "%sprofile", peers[index]); prefs.getBytes( peers[0], temp, 15000 );    //  use peer zero as scratch buffer here to read the profile of peer wich is at 'index+profile'
+        //char nvsalias[16]; sprintf(nvsalias, "%sprofile", peers[index]); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
+        char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
+        //prefs.getBytes( std::format("{}profile", peers[index]).c_str(), temp, 15000 );
+
 
         Serial.println("first decryption successfull");
 
-        if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'index+profile' see abouve
+        if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
 
-        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peers[index]); strcpy(show.nvsalias, peers[index]); xQueueSend(showQueue, &show, 0);    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peers[index].data()); strcpy(show.nvsalias, peers[index].data()); xQueueSend(showQueue, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beninging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
 
         xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
-        //prefs.putBytes( (String(topic).substring(7) + "L").c_str(), cyphy, 15000 );    //  save foto to nvsalias+'L' so we can show it later
-        //prefs.putBytes( strcpy(&peer[1], "latest"), rcvcyphy, 15000 );    //  save foto of peer wich is 'index+latest'
-        sprintf(peers[0], "%slatest", peers[index]); prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  use peer zero as scratch buffer here to save foto of peer wich is 'index+latest'
-        
+        //sprintf(peers[0], "%slatest", peers[index]); prefs.putBytes( peers[0], rcvcyphy, 15000 );    //  use peer zero as scratch buffer here to save foto of peer wich is 'index+latest'
+        char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%slatest", peers[index].data()); prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  save foto of peer wich is 'peer+latest' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
+
         Serial.println("second decryption successfull");
-        
-        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peers[index]); strcpy(show.nvsalias, peers[index]); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
+
+        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peers[index].data()); strcpy(show.nvsalias, peers[index].data()); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
       }
 
       chachapoly.clear(); return;    //  exit lambda
-    }
+    } while (index);
   });
 
   mqttClient.connect();
@@ -836,8 +766,8 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
 
   while (true) {
 
+    /*
     if ( ulTaskNotifyTake(pdTRUE, 0) ) { //reload peer list when notified by other tasks
-      //free(peers); peers = NULL;    //  free memory for peer list so it is reallocated with press
 
       size = prefs.getBytesLength("peers"); peers = (char (*)[16]) realloc( peers, size );    //  preseving old peers is useless here so just directly assign yes this leaky but next line errors out
       if (!peers) { Serial.println("failed to allocate memory for peers\n"); ESP.restart(); }    //  error out
@@ -848,7 +778,7 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
       // ---------- TODO -------------
       //  also load all hkdfs into memory for decryption in .ontopic here this would be faster but also use more memory
     }
-
+    */
 
 
     //if(!xQueueIsQueueEmptyFromISR( sendmqttQueue )){    //  just do sth when queue not empty
@@ -895,17 +825,13 @@ void sendmqttTas(void *parameter) {    //  this handles outgoing mqtt messages
         free(payload);
 
 
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this releases the task until notivied or timeout runs out
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this blocks the task until notivied or timeout runs out this is to filter echos
         else { Serial.println("timeout waiting for echo\n"); }    //  TODO make this a debug log
 
       }
 
     }
     taskYIELD();
-    //vTaskDelay(1);    // just send every two second so we have enugh time to filter out our echos with curriv
-                      // TODO change this back to two seconds
-                      // but with a larege delay local sends do not get processed fast enough and when user send sth to himself alias cahnges his lates foto
-                      //  then the show task is executed first and shows the old latest foto instead of the new one
   }
 }
 
