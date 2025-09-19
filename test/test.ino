@@ -77,7 +77,7 @@ QueueHandle_t logsQueue;
 struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
 
 
-Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
+//Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
 
 
 
@@ -124,6 +124,57 @@ Preferences prefs;    //  first declaration of preferences as perfs   --------- 
 
 
 
+void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
+  static bool firstcall = true;    //  this is to ensure prefs.begin is only called once
+
+  static Preferences prefs;
+
+  // caches for faster access
+  static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
+  static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
+  static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist;
+
+  if (firstcall){ // load cahes from nvs // TODO do this only on first run
+    prefs.begin("prefs", false);    //  TODO only do this on first run
+    prefs.getBytes("peers", peers.data(), prefs.getBytesLength("peers"));    //  read peer list into vector
+    prefs.getBytes("hkdfs", hkdfs.data(), prefs.getBytesLength("hkdfs"));    //  read hkdf list into vector
+    prefs.getUInt("slots", slots);    //  read slot count
+  }
+
+  firstcall = false;    //  this is to ensure prefs.begin is only called once
+
+  static uint8_t temp[64] = {};
+
+  prefs.putString("pass", "nulltermstring!!!");
+
+  if ( !strcmp(type, "hkdf") ) {    //  return chached hkdf
+    return hkdfs[k];
+  }
+  if ( !strcmp(type, "peers") ) {    //  return chached peer
+    return peers[k].data();
+  }
+  if ( !strcmp(type, "slots") ) {    //  return chached slot count
+    return slots;
+  }
+  if ( !strcmp(type, "p") ) {
+    prefs.getString("pass", temp, prefs.getLength("pass"));    //  get string from nvs
+    return *temp;
+  }
+  if ( !strcmp(type, "getint") ) {
+    return prefs.getUInt(k, 0);    //  get int from nvs
+  }
+}
+
+// ------------
+  char *peer3 = (char *)nvscache("peers", 3);
+// ------------
+
+
+
+
+
+
+
 void networkTas(void *parameter) {    //  this connects to wifi or spawns an access point for configuration
   WiFi.mode(WIFI_STA);
   WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
@@ -153,16 +204,6 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
 
 
 void wstas() {    //  this spawns webserial and handles all web stuff
-
-  // this only works after all tasks are created obviously so wstask has to be created last
-  // get task handles for the info task wich tries to get the watermarks of other tasks
-  // instead of keeping global task handles these could be retrieved once here. make sure the taskhndles are not used elsewhere to
-  TaskHandle_t servoTasHandle = xTaskGetHandle("servoTas");
-  TaskHandle_t sendmqttHandle = xTaskGetHandle("sendmqtt");
-  TaskHandle_t flanksTasHandle = xTaskGetHandle("flanksTas");
-  TaskHandle_t networkTasHandle = xTaskGetHandle("networkTas");
-  TaskHandle_t showTasHandle = xTaskGetHandle("showTas");
-  //TaskHandle_t wsTasHandle = xTaskGetHandle("wsTas");   notrequired just do uxTaskGetStackHighWaterMark(NULL) for self
 
   // -------- TODO -----------
   // load the peers and hkdfs vectors from nvs
@@ -259,34 +300,47 @@ void wstas() {    //  this spawns webserial and handles all web stuff
     // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
 
 
-    // todo either put this inside help or in a seperate info cmd
-    //
-    // char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); ws.print(nvsfree);
-    // ws.print("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
-    // ws.print("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
-    // if(WiFi.getMode() == WIFI_MODE_AP) { ws.print("local ip " + WiFi.softAPIP().toString() + " \n"); }
-    // if(WiFi.getMode() == WIFI_MODE_STA) { ws.print("local ip " + WiFi.localIP().toString() + " \n"); }
-    // char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); ws.print(macStr);    //  this is so tiedious pls help me do not know how to string
-    // ws.print("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
-    // ws.print("| ---- | --- | -------- | -------- | ---------------- | \n");
-    // esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
-    // if (pi != NULL) {
-    //   do {
-    //     const esp_partition_t* p = esp_partition_get(pi);
-    //       char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); ws.print(buffer);    //  this sucks i hate strings i miss python
-    //   } while (pi = (esp_partition_next(pi)));
-    // }
-    // int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
-    //    TaskHandle_t watermarkHandle;
-    //    void printWatermarkTas(void *count){
-    //      int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
-    //      for (int i = 0; i < iter; i++) {
-    //          feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "'\n");
-    //          vTaskDelay(1000);
-    //      }
-    //      feedlog("\n\n");
-    //      vTaskDelete(watermarkHandle);
-    //    }
+    {"info", [&](std::string args) {
+      // this only works after all tasks are created obviously so wstask has to be created last
+      // get task handles for the info task wich tries to get the watermarks of other tasks
+      // instead of keeping global task handles these could be retrieved once here. make sure the taskhndles are not used elsewhere to
+      TaskHandle_t servoTasHandle = xTaskGetHandle("servoTas");    //  this takes some time hopfully this is fine inide a callback
+      TaskHandle_t sendmqttHandle = xTaskGetHandle("sendmqtt");
+      TaskHandle_t flanksTasHandle = xTaskGetHandle("flanksTas");
+      TaskHandle_t networkTasHandle = xTaskGetHandle("networkTas");
+      TaskHandle_t showTasHandle = xTaskGetHandle("showTas");
+      //TaskHandle_t wsTasHandle = xTaskGetHandle("wsTas");   notrequired just do uxTaskGetStackHighWaterMark(NULL) for self
+      
+      // todo either put this inside help or in a seperate info cmd
+      //
+      // char nvsfree[30]; sprintf(nvsfree, "\n\nfree entries in nvs %d \n", prefs.freeEntries()); ws.print(nvsfree);
+      // ws.print("PSRAM " + (psramFound() ? "found " + String(ESP.getPsramSize()) + " bytes total, " + String(ESP.getFreePsram()) + " bytes free \n" : "Not found\n"));
+      // ws.print("auto firmware url is '" + prefs.getString("airlink", "error") + "' \n");
+      // if(WiFi.getMode() == WIFI_MODE_AP) { ws.print("local ip " + WiFi.softAPIP().toString() + " \n"); }
+      // if(WiFi.getMode() == WIFI_MODE_STA) { ws.print("local ip " + WiFi.localIP().toString() + " \n"); }
+      // char macStr[30]; sprintf(macStr, "eFuse mac %012llX \n", ESP.getEfuseMac() ); ws.print(macStr);    //  this is so tiedious pls help me do not know how to string
+      // ws.print("| Type | Sub |  Offset  |   Size   |       Label      | \n");    //  this prints current partition table just for your info
+      // ws.print("| ---- | --- | -------- | -------- | ---------------- | \n");
+      // esp_partition_iterator_t pi = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+      // if (pi != NULL) {
+      //   do {
+      //     const esp_partition_t* p = esp_partition_get(pi);
+      //       char buffer[128]; sprintf(buffer, "|  %02x  | %02x  | 0x%06X | 0x%06X | %-16s | \n", p->type, p->subtype, p->address, p->size, p->label); ws.print(buffer);    //  this sucks i hate strings i miss python
+      //   } while (pi = (esp_partition_next(pi)));
+      // }
+      // int count = msg.substring(5).toInt() ; xTaskCreate( printWatermarkTas, "printWatermarkTas", 2048, (void*) &count, 1, &watermarkHandle ); return;   //  determine stack size just for your info 'xTaskCreate( function, name, stack size bytes, parameter to pass, priority, handle )'
+      //    TaskHandle_t watermarkHandle;
+      //    void printWatermarkTas(void *count){
+      //      int iter = *(int*) count; feedlog ("printing stack high watermark for tasks for " + String(iter) + " seconds \n");
+      //      for (int i = 0; i < iter; i++) {
+      //          feedlog(String(i+1) + "/" + String(iter) + ", dnsTas '" + String(uxTaskGetStackHighWaterMark(dnsServHandle)) + "', servoTas '" + String(uxTaskGetStackHighWaterMark(servoTasHandle)) + "', sendmqttTas '" + String(uxTaskGetStackHighWaterMark(sendmqttHandle)) + "'\n");
+      //          vTaskDelay(1000);
+      //      }
+      //      feedlog("\n\n");
+      //      vTaskDelete(watermarkHandle);
+      //    }
+    }},
+
 
     {"topic", [&](std::string args) {
       if (args.empty()) { ws.print("Error: topic requires a value\n"); return; }
@@ -734,7 +788,7 @@ void setup() {    //  when this int main() instead this does not compile
   
 
 
-  /*
+  /* no global task handles anymore only necessary for info cmd for high water mark.
   xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to connect to wifi
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
   xTaskCreate( wstas, "wstas", 32768, NULL, 1, &wstasHandle );    //  spawn web task to handle all web stuff
@@ -744,33 +798,7 @@ void setup() {    //  when this int main() instead this does not compile
   */
 
   Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
-  prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
-
-  /* not worth it 
-  struct AppContext {
-    Preferences *prefs;                       // pointer to prefs instance (prefs still defined in file)
-    QueueHandle_t servoQueue;
-    QueueHandle_t sendmqttQueue;
-    QueueHandle_t showQueue;
-    QueueHandle_t logsQueue;
-
-    std::vector<std::array<char, 8>> peers;   // moved into ctx
-    std::vector<std::array<uint8_t, 32>> hkdfs;// moved into ctx
-    uint32_t slots = 0;                       // moved into ctx
-
-    struct showstct { char ocupado[5]; uint8_t partial;char nvsalias[16]; };
-    struct sendstct { uint32_t peer; char load[16]; };
-    struct logsstct { uint8_t verbosity; char feed[40]; };
-  };
-
-
-  static AppContext *ctx = new AppContext();
-  ctx->prefs = &prefs;
-  ctx->servoQueue   = xQueueCreate(5, sizeof("sit"));
-  ctx->sendmqttQueue= xQueueCreate(5, sizeof(AppContext::sendstct));
-  ctx->showQueue    = xQueueCreate(5, sizeof(AppContext::showstct));
-  ctx->logsQueue    = xQueueCreate(1, sizeof(AppContext::logsstct));
-  */
+  //prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
   xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, NULL );    //  spawn network task to connect to wifi
   xTaskCreate( wstas, "wstas", 32768, NULL, 1, NULL );    //  spawn web task to handle all web stuff
