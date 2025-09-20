@@ -93,8 +93,6 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 
 
 
-
-
 // ----------- TODO -----------
 //
 //  could i replace queues with direct to task notifications for servoQueue, sendmqttQueue, showQueue ?
@@ -122,8 +120,27 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 
 
 
+QueueHandle_t logs(uint8_t verbosity, const char *format, ...) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct logsstct { uint8_t verbosity; char feed[40]; } logs;    //  handle and struct for logs queue
+  static QueueHandle_t logsQueue = NULL;
+
+  if (format==NULL && logsQueue == NULL ) {    //  create queue when called with NULL and not yet created
+    logsQueue = xQueueCreate(5, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  } else {
+    logs.verbosity = verbosity;
+    va_list args;
+    va_start(args, format);
+    vsnprintf(logs.feed, sizeof(logs.feed), format, args);
+    va_end(args);
+    xQueueSend(logsQueue, &logs, 0);    //  do not block if queue is full
+  }
+
+  return logsQueue;
+}
 
 
+
+//  add a way to put stuff and therefor invalidate caches/ reload caches
 void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
   static bool firstcall = true;    //  this is to ensure prefs.begin is only called once
 
@@ -151,7 +168,7 @@ void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
     return hkdfs[k];
   }
   if ( !strcmp(type, "peers") ) {    //  return chached peer
-    return peers[k].data();
+    return peers[k].data();^
   }
   if ( !strcmp(type, "slots") ) {    //  return chached slot count
     return slots;
@@ -211,7 +228,11 @@ void wstas() {    //  this spawns webserial and handles all web stuff
   // this is required for iterations over these vectors in mqtt task or flanks task !!!!!
 
 
-  logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  
+  //logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  QueueHandle_t logsQueue = logs(NULL);    //  create logs queue
+
+
 
   static uint8_t prefsverbosity = 0; // TODO add verbosity command with nvs
 
@@ -653,7 +674,11 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
 
-        struct showstct show={ "", 1, "" }; strcpy(show.ocupado, peers[index].data()); strcpy(show.nvsalias, peers[index].data()); xQueueSend(showQueue, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beninging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        struct showstct show={ "", 1, "" }; 
+        strcpy(show.ocupado, peers[index].data()); 
+        strcpy(show.nvsalias, peers[index].data()); 
+        xQueueSend(showQueue, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beninging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        //comm("showQueue", "param1", "param2");
 
         xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
       }
