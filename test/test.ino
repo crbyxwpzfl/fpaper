@@ -65,6 +65,8 @@ static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one
 //     - already put work into dynamic changes sunken cost fallacy 
 
 
+
+/* ----- moved into communication functions to avoid globals -----
 QueueHandle_t servoQueue;    //  handle for servo queue this has no associated struct
 
 QueueHandle_t sendmqttQueue;
@@ -75,6 +77,7 @@ struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };    // 
 
 QueueHandle_t logsQueue;
 struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
+---------------------- */
 
 
 //Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
@@ -120,28 +123,68 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 
 
 
-QueueHandle_t logs(uint8_t verbosity, const char *format, ...) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct logsstct { uint8_t verbosity; char feed[40]; } logs;    //  handle and struct for logs queue
+QueueHandle_t logs(uint8_t verbosity = 0, char text[40] = "n.a.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs;
   static QueueHandle_t logsQueue = NULL;
 
-  if (format==NULL && logsQueue == NULL ) {    //  create queue when called with NULL and not yet created
+  if (logsQueue == NULL ) {    //  create queue when not yet created
     logsQueue = xQueueCreate(5, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
   } else {
     logs.verbosity = verbosity;
-    va_list args;
-    va_start(args, format);
-    vsnprintf(logs.feed, sizeof(logs.feed), format, args);
-    va_end(args);
+    strncpy(logs.text, text, sizeof(logs.text));
     xQueueSend(logsQueue, &logs, 0);    //  do not block if queue is full
   }
-
   return logsQueue;
 }
 
 
+QueueHandle_t shows(char ocupado[5] = "N.A.", uint8_t partial = 0, char nvsalias[16] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }; show;
+  static QueueHandle_t showQueue = NULL;
+
+  if (showQueue == NULL ) {    //  create queue when called with NULL and not yet created
+    showQueue = xQueueCreate(5, sizeof(showstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  } else {
+    strncpy(show.ocupado, ocupado, sizeof(show.ocupado));
+    show.partial = partial;
+    strncpy(show.nvsalias, nvsalias, sizeof(show.nvsalias));
+    xQueueSend(showQueue, &show, 0);    //  do not block
+  }
+  return showQueue;
+}
+
+
+QueueHandle_t mqsend(uint32_t peer = 0, char load[16] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct sendstct { uint32_t peer; char load[16]; } send;
+  static QueueHandle_t sendQueue = NULL;
+
+  if (sendQueue == NULL ) {    //  create queue when called the first time
+    sendQueue = xQueueCreate(5, sizeof(sendstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  } else {
+    send.peer = peer;
+    strncpy(send.load, load, sizeof(send.load));
+    xQueueSend(sendQueue, &send, 0);    //  do not block if queue is full
+  }
+  return sendQueue;
+}
+
+
+QueueHandle_t servo(char pos[4] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  static QueueHandle_t servoQueue = NULL;
+
+  if (servoQueue == NULL ) {    //  create queue when called the first time
+    servoQueue = xQueueCreate(5, sizeof(char[4]));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
+  } else {
+    strncpy(pos, pos, sizeof(pos));
+    xQueueSend(servoQueue, &pos, 0);    //  do not block if queue is full
+  }
+  return servoQueue;
+}
+
 
 //  add a way to put stuff and therefor invalidate caches/ reload caches
-void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
+void* nvscache(char type[5]={}, uint32 index=0, char k[]={}, ) {
+
   static bool firstcall = true;    //  this is to ensure prefs.begin is only called once
 
   static Preferences prefs;
@@ -160,7 +203,7 @@ void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
 
   firstcall = false;    //  this is to ensure prefs.begin is only called once
 
-  static uint8_t temp[64] = {};
+  static uint8_t temp[15000] = {};    //  large enough to fit a foto
 
   prefs.putString("pass", "nulltermstring!!!");
 
@@ -168,7 +211,7 @@ void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
     return hkdfs[k];
   }
   if ( !strcmp(type, "peers") ) {    //  return chached peer
-    return peers[k].data();^
+    return peers[k].data();
   }
   if ( !strcmp(type, "slots") ) {    //  return chached slot count
     return slots;
@@ -182,7 +225,7 @@ void* nvscache(char type[5]={}, uint32 index=0, char k[]={}) {
   }
 }
 
-// ------------
+// ------------ caller ------------
   char *peer3 = (char *)nvscache("peers", 3);
 // ------------
 
