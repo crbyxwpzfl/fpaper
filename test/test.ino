@@ -182,55 +182,110 @@ QueueHandle_t servo(char pos[4] = "N.A.") {    //  this is to send logs to wstas
 }
 
 
-//  add a way to put stuff and therefor invalidate caches/ reload caches
-void* nvscache(char type[5]={}, uint32 index=0, char k[]={}, ) {
 
-  static bool firstcall = true;    //  this is to ensure prefs.begin is only called once
 
-  static Preferences prefs;
 
-  // caches for faster access
-  static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
-  static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
-  static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist;
 
-  if (firstcall){ // load cahes from nvs // TODO do this only on first run
-    prefs.begin("prefs", false);    //  TODO only do this on first run
-    prefs.getBytes("peers", peers.data(), prefs.getBytesLength("peers"));    //  read peer list into vector
-    prefs.getBytes("hkdfs", hkdfs.data(), prefs.getBytesLength("hkdfs"));    //  read hkdf list into vector
-    prefs.getUInt("slots", slots);    //  read slot count
-  }
 
-  firstcall = false;    //  this is to ensure prefs.begin is only called once
 
-  static uint8_t temp[15000] = {};    //  large enough to fit a foto
+//---------------- NVS cache access v1 ----------------------
+//  how do we invalidate caches/ reload caches ??
+void* nvscache(const char* type = "", uint32_t index = 0, const char* key = "") {
+    static bool firstcall = true;
+    static Preferences prefs;
+    static std::vector<std::array<char, 8>> peers;
+    static std::vector<std::array<uint8_t, 32>> hkdfs;
+    static uint32_t slots = 0;
+    
+    if (firstcall) {
+        prefs.begin("prefs", false);
+        
+        // Fix: properly load caches by resizing first
+        size_t pb = prefs.getBytesLength("peers");
+        if (pb) {
+            peers.resize(pb / 8);
+            prefs.getBytes("peers", peers.data(), pb);
+        }
+        
+        size_t hb = prefs.getBytesLength("hkdfs");
+        if (hb) {
+            hkdfs.resize(hb / 32);
+            prefs.getBytes("hkdfs", hkdfs.data(), hb);
+        }
+        
+        slots = prefs.getUInt("slots", 0);
+        firstcall = false;
+    }
+    
+    if (!strcmp(type, "hkdfs")) {
+        if (index < hkdfs.size()) return hkdfs[index].data();
+        return nullptr;
+    }
+    if (!strcmp(type, "peers")) {
+        if (index < peers.size()) return peers[index].data();
+        return nullptr;
+    }
+    if (!strcmp(type, "slots")) {
+        return &slots;
+    }
+    
+    return &prefs; // default: return Preferences reference
+}
 
-  prefs.putString("pass", "nulltermstring!!!");
 
-  if ( !strcmp(type, "hkdf") ) {    //  return chached hkdf
-    return hkdfs[k];
-  }
-  if ( !strcmp(type, "peers") ) {    //  return chached peer
-    return peers[k].data();
-  }
-  if ( !strcmp(type, "slots") ) {    //  return chached slot count
-    return slots;
-  }
-  if ( !strcmp(type, "p") ) {
-    prefs.getString("pass", temp, prefs.getLength("pass"));    //  get string from nvs
-    return *temp;
-  }
-  if ( !strcmp(type, "getint") ) {
-    return prefs.getUInt(k, 0);    //  get int from nvs
-  }
+// For inline access:
+Preferences& nvs() {
+    return *static_cast<Preferences*>(nvscache());
 }
 
 // ------------ caller ------------
-  char *peer3 = (char *)nvscache("peers", 3);
+  // Cached access
+  char* peer3 = (char*)nvscache("peers", 3);
+  uint8_t* hkdf5 = (uint8_t*)nvscache("hkdfs", 5);
+  uint32_t slot_count = *(uint32_t*)nvscache("slots");
+
+
+  // Direct NVS access with explicit cast no wrapper function
+  //Preferences *p = static_cast<Preferences*>(nvscache());     //  for direct nvs access
+  //String s = p->getString("someKey", "default");
+
+  // Direct NVS access (inline style) with wrapper function
+  String s = nvs().getString("someKey", "default");
+  nvs().putString("newKey", "value");
+  uint32_t val = nvs().getUInt("intKey", 0);
 // ------------
+// ---------------- NVS cache access v1 ----------------------
 
 
 
+
+// ----------------- NVS cache access v2 ----------------------
+Preferences& nvs() {
+  static Preferences prefs;
+  static bool firstcall = false;
+
+  if (!firstcall
+    prefs.begin("prefs", false);
+    firstcall = true;
+  }
+  return prefs;
+}
+
+peerscached (){
+ // load peers from nvs into static vector
+ // return reference to vector
+} 
+
+hkdfscached (){
+ // load hkdfs from nvs into static vector
+ // return reference to vector
+}
+
+slotscached (){
+ // load slots from nvs into static variable
+ // return reference to variable
+}
+// ----------------- NVS cache access v2 ----------------------
 
 
 
