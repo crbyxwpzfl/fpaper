@@ -163,15 +163,15 @@ class LogsQueue {
   struct LogMessage { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class
 
   LogsQueue() {    //  constructor creates queue when not yet created    this feels racey
-      if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
+    if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
   }
 
   bool send(uint8_t verbosity, const char* text) {
-      if (!queue) return false;
-      LogMessage msg{};
-      msg.verbosity = verbosity;
-      strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-      return xQueueSend(queue, &msg, 0) == pdPASS;
+    if (!queue) return false;
+    LogMessage msg{};
+    msg.verbosity = verbosity;
+    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+    return xQueueSend(queue, &msg, 0) == pdPASS;
   }
 
   QueueHandle_t getHandle() const { return queue; }    //  provide access to the queue handle
@@ -240,7 +240,7 @@ QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas 
 }
 
 
-
+// ---------- TODO consider replacing this with a class like above for coherence -----------
 
 Preferences& nvs() {    //  this initializes nvs namespace and provided direct access to it
   static Preferences prefs;
