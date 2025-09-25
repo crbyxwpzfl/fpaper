@@ -184,83 +184,7 @@ QueueHandle_t servo(char pos[4] = "N.A.") {    //  this is to send logs to wstas
 
 
 
-
-
-
-
-//---------------- NVS cache access v1 ----------------------
-//  how do we invalidate caches/ reload caches ??
-void* nvscache(const char* type = "", uint32_t index = 0, const char* key = "") {
-    static bool firstcall = true;
-    static Preferences prefs;
-    static std::vector<std::array<char, 8>> peers;
-    static std::vector<std::array<uint8_t, 32>> hkdfs;
-    static uint32_t slots = 0;
-    
-    if (firstcall) {
-        prefs.begin("prefs", false);
-        
-        // Fix: properly load caches by resizing first
-        size_t pb = prefs.getBytesLength("peers");
-        if (pb) {
-            peers.resize(pb / 8);
-            prefs.getBytes("peers", peers.data(), pb);
-        }
-        
-        size_t hb = prefs.getBytesLength("hkdfs");
-        if (hb) {
-            hkdfs.resize(hb / 32);
-            prefs.getBytes("hkdfs", hkdfs.data(), hb);
-        }
-        
-        slots = prefs.getUInt("slots", 0);
-        firstcall = false;
-    }
-    
-    if (!strcmp(type, "hkdfs")) {
-        if (index < hkdfs.size()) return hkdfs[index].data();
-        return nullptr;
-    }
-    if (!strcmp(type, "peers")) {
-        if (index < peers.size()) return peers[index].data();
-        return nullptr;
-    }
-    if (!strcmp(type, "slots")) {
-        return &slots;
-    }
-    
-    return &prefs; // default: return Preferences reference
-}
-
-
-// For inline access:
-Preferences& nvs() {
-    return *static_cast<Preferences*>(nvscache());
-}
-
-// ------------ caller ------------
-  // Cached access
-  char* peer3 = (char*)nvscache("peers", 3);
-  uint8_t* hkdf5 = (uint8_t*)nvscache("hkdfs", 5);
-  uint32_t slot_count = *(uint32_t*)nvscache("slots");
-
-
-  // Direct NVS access with explicit cast no wrapper function
-  //Preferences *p = static_cast<Preferences*>(nvscache());     //  for direct nvs access
-  //String s = p->getString("someKey", "default");
-
-  // Direct NVS access (inline style) with wrapper function
-  String s = nvs().getString("someKey", "default");
-  nvs().putString("newKey", "value");
-  uint32_t val = nvs().getUInt("intKey", 0);
-// ------------
-// ---------------- NVS cache access v1 ----------------------
-
-
-
-
-// ----------------- NVS cache access v2 ----------------------
-Preferences& nvs() {
+Preferences& nvs() {    //  this initializes nvs namespace and provided direct access to it
   static Preferences prefs;
   static bool firstcall = false;
 
@@ -271,21 +195,131 @@ Preferences& nvs() {
   return prefs;
 }
 
-peerscached (){
- // load peers from nvs into static vector
- // return reference to vector
-} 
 
-hkdfscached (){
- // load hkdfs from nvs into static vector
- // return reference to vector
+char* peerscache (uint32 i, char* peername = nullptr, char* secret = nullptr){    //  fast accessor to peers list and manage its nvs validness    hopefully this is better than reading form nvs each time
+  static std::vector<std::array<char, 8>> peers;
+
+  static bool firstcall = true;    //  static initilizes to false
+
+  if (firstcall) {
+    size_t pb = nvs().getBytesLength("peers");
+    if (pb) {    //  either load peers into cache
+      peers.resize(pb / 8);
+      nvs().getBytes("peers", peers.data(), pb);
+    }
+    else {    //  or initialize peers with default value at index 0
+      peers.push_back("local");
+      nvs().putBytes("peers", peers.data(), peers.size() * 8);
+    }
+    firstcall = false;
+  }
+
+  if (!peername && !secret) return ( i < peers.size() ) ? peers[i].data() : nullptr;    //  for out of range return nullptr
+
+  size_t found; for (found = 1; found < peers.size(); ++found) {    //  find peer in list
+    if ( !strcmp(peers[found].data(), peername) ) break;
+    if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
+  }
+
+  if (!found && secret) {    //  peer not in list and secret provided so add peer here
+    std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+
+    args.copy(peername, size_t(7), 0);   // copy directly from args and leave last byte for NUL
+    peers.push_back(peer);    //  append peer to vector
+
+    nvs().putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
+
+    hkdfscache(found, false, secret);    //  also add secret    // TODO check return here for success
+
+    return peers[found].data();    //  return added peer
+  }
+
+  if (found && !secret) {    //  peer in list and no secret provided so delete peer plus associated data here
+    peers.erase(peers.begin() + found );    //  this is slow but this is not a frequent operation
+    peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+    nvs().putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list without deleted peer to nvs
+
+    nvs().remove( (peername + "latest").c_str() );    //  remove latest foto entry for this peer
+    nvs().remove( (peername + "profile").c_str() );    //  remove profile foto of this peer
+
+    hkdfscache(found, true, nullptr);    //  also delete secret
+
+    return peername;    //  echo deleted peer name
+  }
+
+  return nullptr;    //  peer found and secret provided perhaps add this to overwrite secret    currently user first has to delte peer and then re add him/her/they/them/it/....
 }
 
-slotscached (){
- // load slots from nvs into static variable
- // return reference to variable
+
+uint8_t* hkdfscache (uint32 i, bool found = false, char* secret = nullptr ){    //  fast accessor to hkdfs list and manage its nvs validness    hopefully this is better than reading form nvs each time
+  static std::vector<std::array<uint8_t, 32>> hkdfs;
+
+  static bool firstcall = true;    //  static initilizes to false
+
+  if (firstcall) {
+    size_t hb = nvs().getBytesLength("hkdfs");
+    if (hb) {    //  either load peers into cache
+      hkdfs.resize(hb / 32);
+      nvs().getBytes("hkdfs", hkdfs.data(), hb);
+    }
+    else {    //  or initialize peers with default value at index 0
+      hkdfs.push_back({});
+      nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
+    }
+    firstcall = false;
+  }
+
+  if (!found && !secret) return ( i < hkdfs.size() ) ? hkdfs[i].data() : nullptr;    //  for out of range return nullptr
+
+  if (!found && secret) {    //  add secret
+    std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+    
+    hkdf<SHA256>(hkdfout.data(), 32, secret, strlen(secret), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+    hkdfs.push_back(hkdfout);    //  append hkdf to vector
+
+    nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
+    
+    return hkdfs.back().data();    //  return added hkdf
+  }
+
+  if (found && !secret) {    //  delete secret
+    hkdfs.erase(hkdfs.begin() + i );    //  this is slow but this is not a frequent operation
+    hkdfs.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+    nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back peer list without deleted peer to nvs
+    return hkdfs[i].data();
+  }
+
+  return nullptr;
 }
-// ----------------- NVS cache access v2 ----------------------
+
+
+uint32_t slotscache (uint32_t delslot = 0){
+  static uint32_t slots = 0;
+
+  static bool firstcall = true;
+
+  if (firstcall) {
+    slots = nvs().getUInt("slots", 0);
+    firstcall = false;
+  }
+
+  if (!delslot) return slots;    //  slots are one indexed so zero/default just wants slot count otherwise delete the provided slot but keep an interable/continuous order
+
+  if (delslot > slots) return = 0;    //  slot out of range cant delete this is invalid
+
+  char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
+  char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
+
+  if (delslot != slots) {    //  swap slot with top most slot
+    uint8_t temp[15000];
+    prefs.getBytes( slotschar , temp, sizeof(temp) );    //  read top most slot into temp
+    prefs.putBytes( delslotchar , temp, sizeof(temp) );    //  copy temp to target slot
+  }
+  prefs.remove( slotschar );    //  remove top most slot
+  prefs.putUInt("slots", slots -1);    //  adjust / save slots count
+  
+  return delslot;    //  echo deleted slot to confirm
+}
 
 
 
@@ -338,29 +372,18 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
   WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
 
-
-  size_t peersize = prefs.getBytesLength("peers"); prefs.getBytes("peers", peers.data(), peersize);    //  read peer list into vector
-  size_t hkdfsize = prefs.getBytesLength("hkdfs"); hkdfs.resize(hkdfsize / 32); prefs.getBytes("hkdfs", hkdfs.data(), hkdfsize);    //  read hkdf list into vector
-
-
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
     {"delslot", [&](std::string args) {    //  all these conversions feel wrong
       if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
 
-      uint32_t slot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist
+      uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots a one indexed
 
-      if (!slot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
+      if (!delslot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
 
-      if (slot > slots) { ws.printf("eeee slot '%s' out of range\n", args.c_str()); return; }
+      uint32_t answer = slotscache(delslot);    //  delete and recache/rewrite slots into nvs
 
-      if (slot != slots) {    //  swap slot with top most slot
-        uint8_t temp[15000];
-        prefs.getBytes( std::format("{}", slots).c_str() , temp, sizeof(temp) );    //  read top most slot into temp
-        prefs.putBytes( args.c_str() , temp, sizeof(temp) );    //  copy temp to target slot
-      }
-      prefs.remove( std::format("{}", slots).c_str() );    //  remove top most slot
-      prefs.putUInt("slots", slots -1);    //  adjust / save slots count
-      ws.printf("deleted slot '%u'\n", slot); return;
+      if ( answer == delslot ) { ws.printf("deleted slot '%u'\n", delslot); return; }
+      if (!answer) { ws.printf("eeee slot '%s' out of range\n", args.c_str()); return; }
     }},
 
     {"peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
@@ -369,43 +392,14 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
 
-      size_t found; for (found = 1; found < peers.size(); ++found) {    //  either find peer in list or return early
-        if ( !strcmp(peers[found].data(), name.c_str()) ) break;
-        if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
-      }
+      if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  this is reached when peername too long
 
-      if (!found && name.length() < 8) {    //  when peer not found and name length add peer
-        std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-        args.copy(peer.data(), size_t(7), 0);   // copy directly from args and leave last byte for NUL
-        peers.push_back(peer);    //  append peer to vector
+      char* answer = peerscache(0, name.c_str(), args.c_str() + name.length());    //  all the add/deletion and recache logic is there
+      if ( !answer) { ws.print("eeee sth went wrong in peercache"); return; }    //  nullptr is some error inside peerscache()
+      if ( !strcmp(answer, name.c_str()) ) ws.printf("deleted peer '%s'\n", args.c_str());    //  echo means deleted successfully
+      else ws.printf("added peer '%s' with secret '%s'\n", answer, (args.c_str() + name.length()));
 
-        std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-        hkdf<SHA256>(hkdfout.data(), 32, (args.c_str() + name.length()), strlen(args.c_str() + name.length()), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-        hkdfs.push_back(hkdfout);    //  append hkdf to vector
-
-        prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
-        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
-
-        ws.printf("added peer '%s' with secret '%s'\n", peer.data(), (args.c_str() + name.length())); return;
-      }
-
-      if (found && args.find(' ') == std::string::npos) {    //  when peer found and no secret then delete peer and all associated data
-        peers.erase(peers.begin() + found );    //  this is slow but this is not a frequent operation
-        hkdfs.erase(hkdfs.begin() + found );
-
-        peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
-        hkdfs.shrink_to_fit();
-
-        prefs.remove( (args + "latest").c_str() );    //  remove latest foto entry for this peer
-        prefs.remove( (args + "profile").c_str() );    //  remove profile foto entry for this peer
-
-        prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list without deleted peer to nvs
-        prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
-
-        ws.printf("deleted peer '%s'\n", args.c_str()); return;
-      }
-
-      ws.print("eeee peer name too long\n");    //  this is reached when peername too long
+      return;
     }},
 
     // todo add 'wstime' cmd to set the uptime for the webserial
