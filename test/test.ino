@@ -122,9 +122,67 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 //  - network task is required for webserial and mqtt
 
 
+// -------- cleaner API but this keeps lastReceived in memory even when not needed ---------
+class LogsQueue {
+private:
+  struct LogMessage { uint8_t verbosity; char text[40]; } lastReceived{};    //  declares and zero initializes a instance of struct
+  inline static QueueHandle_t queue = nullptr;    // c++17 inline variable avoids static member definition at global scope
 
-QueueHandle_t logs(uint8_t verbosity = 0, char text[40] = "n.a.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs;
+public:
+  LogsQueue() {    //  constructor creates queue when not yet created this feels racey
+      if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
+  }
+
+  bool send(uint8_t verbosity, const char* text) {
+      if (!queue) return false;
+      LogMessage msg{};
+      msg.verbosity = verbosity;
+      strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+      msg.text[sizeof(msg.text) - 1] = '\0';
+      return xQueueSend(queue, &msg, 0) == pdPASS;
+  }
+
+  bool receive(TickType_t timeout = 0) {
+      if (!queue) return false;
+      return xQueueReceive(queue, &lastReceived, timeout) == pdPASS;
+  }
+
+  uint8_t verbosity() const { return lastReceived.verbosity; }
+  const char* text() const { return lastReceived.text; }
+};
+// ------------------------------------------------------------------
+
+
+
+//  --------- more flexible API but a class for this feels overkill esentially this is a global struct plus the function from below ---------
+class LogsQueue {
+  private:
+  inline static QueueHandle_t queue = nullptr;    // c++17 inline variable avoids static member definition at global scope
+
+  public:
+  struct LogMessage { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class
+
+  LogsQueue() {    //  constructor creates queue when not yet created    this feels racey
+      if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
+  }
+
+  bool send(uint8_t verbosity, const char* text) {
+      if (!queue) return false;
+      LogMessage msg{};
+      msg.verbosity = verbosity;
+      strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+      return xQueueSend(queue, &msg, 0) == pdPASS;
+  }
+
+  QueueHandle_t getHandle() const { return queue; }    //  provide access to the queue handle
+};
+// ----------------------------------------------------------------
+
+
+
+
+QueueHandle_t logs(uint8_t verbosity = 0, char* text = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs{};
   static QueueHandle_t logsQueue = NULL;
 
   if (logsQueue == NULL ) {    //  create queue when not yet created
@@ -138,8 +196,8 @@ QueueHandle_t logs(uint8_t verbosity = 0, char text[40] = "n.a.") {    //  this 
 }
 
 
-QueueHandle_t shows(char ocupado[5] = "N.A.", uint8_t partial = 0, char nvsalias[16] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; }; show;
+QueueHandle_t shows(char* ocupado = nullptr, uint8_t partial = 0, char* nvsalias = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; } show{};
   static QueueHandle_t showQueue = NULL;
 
   if (showQueue == NULL ) {    //  create queue when called with NULL and not yet created
@@ -154,8 +212,8 @@ QueueHandle_t shows(char ocupado[5] = "N.A.", uint8_t partial = 0, char nvsalias
 }
 
 
-QueueHandle_t mqsend(uint32_t peer = 0, char load[16] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct sendstct { uint32_t peer; char load[16]; } send;
+QueueHandle_t mqsend(uint32_t peer = 0, char* load = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+  struct sendstct { uint32_t peer; char load[16]; } send{};
   static QueueHandle_t sendQueue = NULL;
 
   if (sendQueue == NULL ) {    //  create queue when called the first time
@@ -169,7 +227,7 @@ QueueHandle_t mqsend(uint32_t peer = 0, char load[16] = "N.A.") {    //  this is
 }
 
 
-QueueHandle_t servo(char pos[4] = "N.A.") {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
+QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
   static QueueHandle_t servoQueue = NULL;
 
   if (servoQueue == NULL ) {    //  create queue when called the first time
