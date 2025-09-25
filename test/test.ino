@@ -41,7 +41,7 @@
 
 #include <unordered_map>    //  c++ stuff
 #include <functional>
-#include <format>    //  TODO this is huge remove this
+//#include <format>    //  TODO this is huge remove this
 #include <string>
 //#include <string_view>
 
@@ -50,9 +50,9 @@
 
 // ----------- global variables -----------
 
-static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
-static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
-static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
+//static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
+//static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
+//static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
 // perhaps add more here like servo positions
 // consider removing dynamic changes to these and istead only applie them on restart perhaps
 // pro - simplifies code a lot, 
