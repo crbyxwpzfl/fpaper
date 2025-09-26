@@ -298,13 +298,135 @@ QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas 
 }
 // ---------------------------------------------------------------------------------------
 
-// ---------- TODO consider replacing this with a class like above for coherence -----------
+
+
+
+
+
+class nvs {
+public:
+  static std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
+  static std::vector<std::array<uint8_t, 32>> hkdfs;    
+  static uint32_t slots;
+
+  static Preferences prefs;
+
+  static void init() {
+    static bool initilised = false;
+    if (initilised) return;
+    prefs.begin("prefs", false);
+    initilised = true;
+  }
+
+  static void cachepeers() {    //  this rechaches from nvs or inits cache with default value
+    size_t pb = prefs.getBytesLength("peers");
+    if (pb) {    //  either load peers into cache
+      peers.resize(pb / 8);
+      prefs.getBytes("peers", peers.data(), pb);
+    }
+    else {    //  or initialize peers with default value at index 0
+      peers.push_back("local");
+      prefs.putBytes("peers", peers.data(), peers.size() * 8);
+    }
+  }
+
+  static char* appendpeer(char* peername = nullptr) {    //  this appends and writes this vector to nvs
+    std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+
+    args.copy(peername, size_t(7), 0);   // copy directly from args and leave last byte for NUL
+    peers.push_back(peer);    //  append peer to vector
+
+    prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
+
+    return peers.back().data();    //  echo added peer
+  }
+
+  static bool deletepeer(uint32_t i) {    //  this deletes a peer and writes this vector to nvs
+    peers.erase(peers.begin() + i );    //  this is slow but this is not a frequent operation
+    peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+    return prefs.putBytes("peers", peers.data(), peers.size() * 8) == peers.size() * 8;    //  write back peer list without deleted peer to nvs
+  }
+
+  static uint32_t findpeer(char* peername = nullptr) {    //  this finds a peer in the cached vector and returns its index or zero if not found
+    size_t found; 
+    for (found = 1; found < peers.size(); ++found) {    //  find peer in list
+      if ( !strcmp(peers[found].data(), peername) ) break;
+      if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
+    }
+    return found;
+  }
+
+
+  static void cachehkdfs() {
+    size_t hb = prefs.getBytesLength("hkdfs");
+    if (hb) {    //  either load peers into cache
+      hkdfs.resize(hb / 32);
+      prefs.getBytes("hkdfs", hkdfs.data(), hb);
+    }
+    else {    //  or initialize peers with default value at index 0
+      hkdfs.push_back({});
+      prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
+    }
+  }
+
+  static uint8_t* appendhkdf(char* secret = nullptr) {    //  this appends and writes this vector to nvs
+    std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+    
+    hkdf<SHA256>(hkdfout.data(), 32, secret, strlen(secret), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+    hkdfs.push_back(hkdfout);    //  append hkdf to vector
+
+    prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
+    
+    return hkdfs.back().data();    //  return added hkdf
+  }
+
+  static bool deletehkdf(uint32_t i) {    //  this deletes a hkdf and writes this vector to nvs
+    hkdfs.erase(hkdfs.begin() + i );    //  this is slow but this is not a frequent operation
+    hkdfs.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+    return prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32) == hkdfs.size() * 32;    //  write back peer list without deleted peer to nvs
+  }
+
+
+
+  static void cacheslots() {
+    slots = prefs.getUInt("slots", 0);
+  }
+
+  static uint32_t deleteslot(uint32_t delslot) {
+    if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
+    
+    char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
+    char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
+
+    if (delslot != slots) {    //  swap slot with top most slot
+      uint8_t temp[15000];
+      prefs.getBytes( slotschar , temp, sizeof(temp) );    //  read top most slot into temp
+      prefs.putBytes( delslotchar , temp, sizeof(temp) );    //  copy temp to target slot
+    }
+    prefs.remove( slotschar );    //  remove top most slot
+    prefs.putUInt("slots", slots -1);    //  adjust / save slots count
+    
+    return delslot;    //  echo deleted slot to confirm
+  }
+
+  static uint32_t appendslot(uint8_t* foto) {  // TODO perhoas do the nvs write of the foto here
+    slots += 1;
+    prefs.putUInt("slots", slots);
+    return slots;    //  echo slot count to confirm
+  }
+}
+
+
+
+
+
+// ---------- nvs stuff with frequently accessed keys cached inside wrapper functions -----------
 
 Preferences& nvs() {    //  this initializes nvs namespace and provided direct access to it
   static Preferences prefs;
   static bool firstcall = false;
 
-  if (!firstcall
+  if (!firstcall) {
     prefs.begin("prefs", false);
     firstcall = true;
   }
@@ -421,7 +543,7 @@ uint32_t slotscache (uint32_t delslot = 0){
 
   if (!delslot) return slots;    //  slots are one indexed so zero/default just wants slot count otherwise delete the provided slot but keep an interable/continuous order
 
-  if (delslot > slots) return = 0;    //  slot out of range cant delete this is invalid
+  if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
 
   char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
   char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
@@ -436,7 +558,7 @@ uint32_t slotscache (uint32_t delslot = 0){
   
   return delslot;    //  echo deleted slot to confirm
 }
-
+// ---------------------------------------------------------------------------------------
 
 
 
