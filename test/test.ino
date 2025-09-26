@@ -10,8 +10,6 @@
 //  use 'merged.bin' at adress 0x0 with https://espressif.github.io/esptool-js/ for web programming
 
 
-      //  this hard coded finite length stresses me in python me no have to worry me miss python
-
 
 //#include <Arduino.h>    // all this is arduino for an esp32    so compared to c some delacrations are missing but im not sure 
 #include <Preferences.h>
@@ -41,78 +39,21 @@
 
 #include <unordered_map>    //  c++ stuff
 #include <functional>
-//#include <format>    //  TODO this is huge remove this
 #include <string>
+
 //#include <string_view>
-
-
-
-
-// ----------- global variables -----------
-
-//static std::vector<std::array<char, 8>> peers;    //  for decoding in mqtt task and cycling fotos in flanks task  use array here to have continous storage in memory for nvs unlike std::string or list
-//static std::vector<std::array<uint8_t, 32>> hkdfs;    //  for decoding in mqtt task and cycling fotos in flanks task
-//static uint32_t slots = prefs.getUInt("slots", 0);    //  slot count this is one index based so slot zero does not exist
-// perhaps add more here like servo positions
-// consider removing dynamic changes to these and istead only applie them on restart perhaps
-// pro - simplifies code a lot, 
-//     - less risc for heap fragmentation and crashes,
-//     - easy to create local copies for tasks so no globals needed
-//     - more consitent with settings like wifi or mqtt server wich only take affect after restart
-//
-// con - less flexible, 
-//     - local copies in each task use more ram (but psram is abundant anyway)
-//     - already put work into dynamic changes sunken cost fallacy 
-
-
-
-/* ----- moved into communication functions to avoid globals -----
-QueueHandle_t servoQueue;    //  handle for servo queue this has no associated struct
-
-QueueHandle_t sendmqttQueue;
-struct sendstct { uint32_t peer; char load[16]; };
-
-QueueHandle_t showQueue;
-struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };    //  handle and struct for show queue
-
-QueueHandle_t logsQueue;
-struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct for logs queue
----------------------- */
-
-
-//Preferences prefs;    //  first declaration of preferences as perfs   --------- TODO -------- perhaps move this into first crated task and declare it as static !!!
-
-
-
-// only used for get watermarks in wstas info cmd so not globaly needed
-//TaskHandle_t servoTasHandle;
-//TaskHandle_t sendmqttHandle;
-//TaskHandle_t flanksTasHandle;
-//TaskHandle_t networkTasHandle;
-//TaskHandle_t wsTasHandle;
-//TaskHandle_t showTasHandle;
-// -------------------------------------
-
-
-
+//#include <format>    //  TODO this is huge remove this
 
 // ----------- TODO -----------
 //
-//  could i replace queues with direct to task notifications for servoQueue, sendmqttQueue, showQueue ?
-//  would not require global queues and structs anymore but how would i actually queue stuff up ?
 //
 //  redo logging pass stuff with verobosity levels into logQueue but use timeouts so tasks do not block 
-//
-//  perhaps instead of global variables pass them as parameters to the tasks at creation
 //
 //  currently app uses ~1,2MB of flash perhaps reduce this to less than 1MB
 //  currently 200KB internal Ram is remaining this is not too much
 //
 //  major restructuring concerns
-//  - initialize vectors peers, hkdfs, slots correctly
 //  - correct startup sequence eg wifi has to start first only then webserial and mqtt task can start
-//  - webserial already is async so is it bad to put it into its own task?
-//  - same goes for mqtt which is async too
 //
 //  NVS ACCESS IS NOT THREAD SAFE find a solution !! eg semaphore or mutex or seperate task wich sends values back to other tasks 
 //  currently all the app code runs on core1 so this is not an issue
@@ -122,7 +63,9 @@ struct logsstct { uint8_t verbosity; char feed[40]; };    //  handle and struct 
 //  - network task is required for webserial and mqtt
 
 
-// -------- cleaner API but this keeps lastReceived in memory even when not needed ---------
+
+
+/* -------- cleaner API but this keeps lastReceived in memory even when not needed ---------
 class LogsQueue {
 private:
   struct LogMessage { uint8_t verbosity; char text[40]; } lastReceived{};    //  declares and zero initializes a instance of struct
@@ -150,11 +93,11 @@ public:
   uint8_t verbosity() const { return lastReceived.verbosity; }
   const char* text() const { return lastReceived.text; }
 };
-// ------------------------------------------------------------------
+ ------------------------------------------------------------------ */
 
 
 
-//  --------- more flexible API but a class for this feels overkill esentially this is a global struct plus the function from below ---------
+/*  --------- more flexible API but a class for this feels overkill esentially this is a global struct plus the function from below ---------
 class LogsQueue {
   private:
   inline static QueueHandle_t queue = nullptr;    // c++17 inline variable avoids static member definition at global scope
@@ -176,19 +119,17 @@ class LogsQueue {
 
   QueueHandle_t getHandle() const { return queue; }    //  provide access to the queue handle
 };
-// ----------------------------------------------------------------
+  ---------------------------------------------------------------- */
 
 
-
-// ---------- most flexible essentially as if all this was global but wrapped in a class is this bad design? -----------
-class comms {    //  this is for all the inter task communication via queues
+class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
   public:
   inline static QueueHandle_t logsq = nullptr;    //  provide public access to the queue handles instead of private and access functions
   inline static QueueHandle_t showq = nullptr;    // c++17 inline variable avoids static member definition at global scope
   inline static QueueHandle_t mqsendq = nullptr;
   inline static QueueHandle_t servoq = nullptr;
 
-  struct logsstct { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class
+  struct logsstct { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
   struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };
   struct mqsendstct { uint32_t peer; char load[16]; };
   struct servostct { char pos[4]; };    //  no struct required for servo queue
@@ -211,8 +152,8 @@ class comms {    //  this is for all the inter task communication via queues
     return xQueueSend(logsq, &log, 0) == pdPASS;
   }
 
-  static bool toshowq(const char* ocupado, uint8_t partial, const char* nvsalias) {
-    if (!showq) return false;
+  static bool toshowq(const char* ocupado, uint8_t partial, const char* nvsalias) {    // TODO add an optional parameter wich gets appended to nvsalias this would greatly reduce all those temporary buffers just to append profile or latest
+    if (!showq) return false;                                                          //      also add optional parameter to pass a intager wich then gets converted to a string to use as nvs key this also would reduce clutter for callers
     showstct show{};
     strncpy(show.ocupado, ocupado ? ocupado : "", sizeof(show.ocupado) - 1);
     show.partial = partial;
@@ -220,7 +161,7 @@ class comms {    //  this is for all the inter task communication via queues
     return xQueueSend(showq, &show, 0) == pdPASS;
   }
 
-  static bool tomqsendq(uint32_t peer, const char* load) {
+  static bool tomqsendq(uint32_t peer, const char* load) {                            //  see above TODOS
     if (!mqsendq) return false;
     mqsendstct send{};
     send.peer = peer;
@@ -238,7 +179,7 @@ class comms {    //  this is for all the inter task communication via queues
 // ---------------------------------------------------------------------------------------
 
 
-//  ---------- these have the issue with a localiesed struct so this would require global struct definitions ----------
+/*  ---------- these have the issue with a localiesed struct so this would require global struct definitions ----------
 QueueHandle_t logs(uint8_t verbosity = 0, char* text = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
   struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs{};
   static QueueHandle_t logsQueue = NULL;
@@ -296,7 +237,7 @@ QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas 
   }
   return servoQueue;
 }
-// ---------------------------------------------------------------------------------------
+ --------------------------------------------------------------------------------------- */
 
 
 
@@ -333,21 +274,26 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     slots = prefs.getUInt("slots", 0);
   }
 
+  static void cachelogsverbosity() {
+    logsverbosity = prefs.getUInt("logsverbosity", 0);
+  }
 
   public:
   static inline std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
   static inline std::vector<std::array<uint8_t, 32>> hkdfs;    
   static inline uint32_t slots;
+  static inline uint32_t logsverbosity;    //  this is the verbosity level for logs to webserial
 
   static inline Preferences prefs;
 
   static void init() {
     static bool initialised = false;
     if (initialised) return;
-    prefs.begin("prefs", false);
+    prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode
     cachepeers();
     cachehkdfs();
     cacheslots();
+    cachelogsverbosity();
     initialised = true;
   }
 
@@ -357,7 +303,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     strncpy(peer.data(), peername ? peername : "", 7);   // copy directly from args and leave last byte for NUL
     peers.push_back(peer);    //  append peer to vector
 
-    prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
+    prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs    todo check for write errors
 
     return peers.back().data();    //  echo added peer
   }
@@ -376,7 +322,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
         if (!strcmp(peers[i].data(), peername)) return i;
     }
     return 0;  // Not found
-}
+  }
 
 
   static uint8_t* appendhkdf(char* secret = nullptr) {    //  this appends and writes this vector to nvs
@@ -385,7 +331,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     hkdf<SHA256>(hkdfout.data(), 32, secret, strlen(secret), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
     hkdfs.push_back(hkdfout);    //  append hkdf to vector
 
-    prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
+    prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs    todo check for write errors
     
     return hkdfs.back().data();    //  return added hkdf
   }
@@ -424,14 +370,18 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     prefs.putBytes( slotchar , foto, 15000);    //  write foto to nvs at slot position
     return slots;    //  echo slot count to confirm
   }
+
+  static bool putlogsverbosity(uint32_t verbosity) {    //  this sets the logs verbosity level and writes it to nvs
+    logsverbosity = verbosity;
+    return prefs.putUInt("logsverbosity", logsverbosity) == logsverbosity;
+  }
 }
 
 
 
 
 
-// ---------- nvs stuff with frequently accessed keys cached inside wrapper functions -----------
-
+/* ---------- nvs stuff with frequently accessed keys cached inside wrapper functions  this perhpahs has a little function overhead compared to globals -----------
 Preferences& nvs() {    //  this initializes nvs namespace and provided direct access to it
   static Preferences prefs;
   static bool firstcall = false;
@@ -568,21 +518,21 @@ uint32_t slotscache (uint32_t delslot = 0){
   
   return delslot;    //  echo deleted slot to confirm
 }
-// ---------------------------------------------------------------------------------------
+ --------------------------------------------------------------------------------------- */
 
 
 
 void networkTas(void *parameter) {    //  this connects to wifi or spawns an access point for configuration
   WiFi.mode(WIFI_STA);
-  WiFi.begin( prefs.getString("ssid", "fpaper"), prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
+  WiFi.begin( nvs::prefs.getString("ssid", "fpaper"), nvs::prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
 
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  this waits for a default time and when not able to connect to ssid falls back to ap
     WiFi.mode(WIFI_AP);
     WiFi.softAP("fpaper", "");
-    Serial.println(prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
+    Serial.println( nvs::prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
     //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
   } else {
-    Serial.println(prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
+    Serial.println( nvs::prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
     //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
     vTaskDelete(NULL);    //  all done so delete this task
   }
@@ -592,7 +542,6 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
   while(true){
       dnsServer.processNextRequest();
       Serial.println("dns for ap mode");  // make this debug only
-      //vTaskDelay(10);
       taskYIELD();
   }
 }
@@ -602,25 +551,11 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
 
 void wstas() {    //  this spawns webserial and handles all web stuff
 
-  // -------- TODO -----------
-  // load the peers and hkdfs vectors from nvs
-  // if not found initialize them with local peer and garbage for hkdf[0]
-  // this is required for iterations over these vectors in mqtt task or flanks task !!!!!
-
-
-  
-  //logsQueue = xQueueCreate(1, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
-  QueueHandle_t logsQueue = logs(NULL);    //  create logs queue
-
-
-
-  static uint8_t prefsverbosity = 0; // TODO add verbosity command with nvs
-
   AsyncWebServer server(80);
 
   WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
 
-  const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile-time initialization to reduce heap pressure/fragmentation
+  const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile time initialization to reduce heap pressure/fragmentation
     {"delslot", [&](std::string args) {    //  all these conversions feel wrong
       if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
 
@@ -628,10 +563,10 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
       if (!delslot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
 
-      uint32_t answer = slotscache(delslot);    //  delete and recache/rewrite slots into nvs
-
-      if ( answer == delslot ) { ws.printf("deleted slot '%u'\n", delslot); return; }
-      if (!answer) { ws.printf("eeee slot '%s' out of range\n", args.c_str()); return; }
+      if (nvs::deleteslot(delslot)) ws.printf("deleted slot '%u'\n", delslot);
+      else  ws.printf("eeee slot '%u' out of range\n", delslot);
+      
+      return;
     }},
 
     {"peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
@@ -640,26 +575,69 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
 
-      if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  this is reached when peername too long
+      if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  when peername too long return early
 
-      char* answer = peerscache(0, name.c_str(), args.c_str() + name.length());    //  all the add/deletion and recache logic is there
-      if ( !answer) { ws.print("eeee sth went wrong in peercache"); return; }    //  nullptr is some error inside peerscache()
-      if ( !strcmp(answer, name.c_str()) ) ws.printf("deleted peer '%s'\n", args.c_str());    //  echo means deleted successfully
-      else ws.printf("added peer '%s' with secret '%s'\n", answer, (args.c_str() + name.length()));
+      uint32_t found = nvs::findpeer(name.c_str());    //  this checks for peer existence
 
-      return;
+      if (found && args.length() == name.length()) {    //  when peer exists and no secret provided so delete peer
+        if ( !nvs::deletepeer(found) ) { ws.printf("eeee failed to delete peer '%s'\n", name.c_str()); return; }
+
+        nvs::deletehkdf(found);    //  also delete associated hkdf
+        nvs::prefs.remove( (name + "latest").c_str() );    //  remove latest foto entry for this peer
+        nvs::prefs.remove( (name + "profile").c_str() );    //  remove profile foto of this peer
+
+        ws.printf("deleted peer '%s'\n", name.c_str());
+        return;
+      }
+
+      if (!found && args.length() != name.length() ) {    //  when peer does not exist and secret provided so add peer
+        nvs::appendpeer(name.c_str());    //  add peer
+        nvs::appendhkdf(args.c_str() + name.length() + 1);    //  add secret
+      }
     }},
 
-    // todo add 'wstime' cmd to set the uptime for the webserial
+    {"wstime", [&](std::string args){    //  this sets time after wich webserial closes automatically    this is for this one friend who is on public wifi
+      if (args.empty()) { ws.print("eeee wstime requires args\n"); return; }
+      uint32_t wstime = strtoul(args.c_str(), NULL, 10);
+      if (!wstime) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
+      nvs::prefs.putUInt("wsalivesec", wstime);
+      ws.printf("closes after '%u' seconds\n", wstime);
+    }},
 
-    // todo add 'publ' to publish to mqtt
+    {"publ", [&](std::string args){    //  this manually publishes sth via the mqsendq
+      if (args.empty()) { ws.print("eeee publ requires args\n"); return; }
+      // TODO validate args and pass to mqsendq
+    }},
 
-    // todo add 'apt upgrade' to set frimware url
+    // todo add 'apt upgrade' to set firmware url
+    {"apt upgrade", [&](std::string args){
+      if (args.empty()) { ws.print("eeee apt upgrade requires a link\n"); return; }
+      if (args.length() < 256) nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  this hard coded finite length stresses me in python me no have to worry me miss python  todo make this length flexible
+      ws.printf("set firmware url to '%s'\n", args.c_str());
+    }},
 
     // todo add 'rm -rf' to clear nvs prefs.clear();
+    {"rm -rf", [&](std::string args){
+      nvs::prefs.clear();
+      ws.print("cleared nvs \n");
+    }},
 
     // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
+    {"top", [&](std::string args){
+      if (args.empty()) { ws.print("eeee top requires args\n"); return; }
+      uint32_t pos = strtoul(args.c_str(), NULL, 10);
+      if (!pos) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
+      nvs::prefs.putUInt("top", pos);
+      ws.printf("top set to '%u'\n", pos);
+    }},
 
+    {"sit", [&](std::string args){
+      if (args.empty()) { ws.print("eeee sit requires args\n"); return; }
+      uint32_t pos = strtoul(args.c_str(), NULL, 10);
+      if (!pos) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
+      nvs::prefs.putUInt("sit", pos);
+      ws.printf("sit set to '%u'\n", pos);
+    }},
 
     {"info", [&](std::string args) {
       // this only works after all tasks are created obviously so wstask has to be created last
@@ -704,32 +682,32 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
 
     {"topic", [&](std::string args) {
-      if (args.empty()) { ws.print("Error: topic requires a value\n"); return; }
-      prefs.putString("mqtop", args.c_str());
+      if (args.empty()) { ws.print("eeeee topic requires a value\n"); return; }
+      nvs::prefs.putString("mqtop", args.c_str());
       ws.printf("MQTT topic set to '%s'\n", args.c_str());
     }},
-    
-    {"debug", [&](std::string args) {
-      if (args.empty()) { ws.print("Error: debug requires a level\n"); return; }
-      prefs.putString("debuglevel", args.c_str());  //  TODO make this an enum !!!!
-      ws.printf("Debug level set to '%s'\n", args.c_str());
+
+    {"verbosity", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee verbosity requires a level\n"); return; }
+      // nvs::putlogsverbosity();  //  TODO accept sth like warn info debug error and convert to uint32_t perhaps with a map or enum
+      ws.printf("verbosity level is '%s'\n", args.c_str());
     }},
     
     {"ssid", [&](std::string args) {
-      if (args.empty()) { ws.print("Error: ssid requires a value\n"); return; }
-      prefs.putString("ssid", args.c_str());
+      if (args.empty()) { ws.print("eeeee ssid requires a value\n"); return; }
+      nvs::prefs.putString("ssid", args.c_str());
       ws.printf("SSID set to '%s'\n", args.c_str());
     }},
     
     {"pass", [&](std::string args) {
-      if (args.empty()) { ws.print("Error: pass requires a value\n"); return; }
-      prefs.putString("pass", args.c_str());
+      if (args.empty()) { ws.print("eeeee pass requires a value\n"); return; }
+      nvs::prefs.putString("pass", args.c_str());
       ws.printf("Password set to '%s'\n", args.c_str());
     }},
     
     {"serv", [&](std::string args) {
-      if (args.empty()) { ws.print("Error: serv requires a URL\n"); return; }
-      prefs.putString("mqserv", args.c_str());
+      if (args.empty()) { ws.print("eeeee serv requires a URL\n"); return; }
+      nvs::prefs.putString("mqserv", args.c_str());
       ws.printf("MQTT server set to '%s'\n", args.c_str());
     }},
     
@@ -740,9 +718,9 @@ void wstas() {    //  this spawns webserial and handles all web stuff
     
     {"help", [&](std::string args) {
       String peerstring = "";
-      size_t size = prefs.getBytesLength("peers");
+      size_t size = nvs::prefs.getBytesLength("peers");
       char (*peers)[16] = (char (*)[16]) malloc(size);
-      prefs.getBytes("peers", peers, size);
+      nvs::prefs.getBytes("peers", peers, size);
       if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }
       for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }
       free(peers);
@@ -754,24 +732,24 @@ void wstas() {    //  this spawns webserial and handles all web stuff
       
       ws.print("\n \n"
           "\nwhen wlan fails an access point spawns \n"
-          " ssid 'ssid'         sets wlan '" + prefs.getString("ssid", "N.A.") + "' \n"
+          " ssid 'ssid'         sets wlan '" + nvs::prefs.getString("ssid", "N.A.") + "' \n"
           " pass 'password'     sets password \n"
                                   
-          "\nmqtt config. tell others to add '" + prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
+          "\nmqtt config. tell others to add '" + nvs::prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
           " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
-          " serv 'mqtt://url'    sets server " + prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
-          " topic 'mqtt/topic'   sets topic '" + prefs.getString("mqtop", "fpaper/+") + "' \n"
-          //" slots 'count'        sets the available slots '" + prefs.getString("slotcount", "4") + "' \n"
+          " serv 'mqtt://url'    sets server " + nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
+          " topic 'mqtt/topic'   sets topic '" + nvs::prefs.getString("mqtop", "fpaper/+") + "' \n"
+          //" slots 'count'        sets the available slots '" + nvs::prefs.getString("slotcount", "4") + "' \n"
 
           "\nservo config. please take finger off before \n"
-          " top  'servo pos'    sets top pos '"  + prefs.getInt("top", 0) + "' \n"
-          " sit  'servo pos'    sets sit pos '"  + prefs.getInt("sit", 0) + "' \n"
+          " top  'servo pos'    sets top pos '"  + nvs::prefs.getInt("top", 0) + "' \n"
+          " sit  'servo pos'    sets sit pos '"  + nvs::prefs.getInt("sit", 0) + "' \n"
 
           "\nother stuff \n"
           " help                prints this\n"
           " info 'seconds'      see some info \n"
           " publ 'text'         publish to mqtt \n"
-          " debug 'level'       sets debug level '" + prefs.getString("debuglevel", "info") + "' \n"
+          " debug 'level'       sets debug level '" + nvs::prefs.getString("debuglevel", "info") + "' \n"
           " restart             well this restarts \n"
           " apt upgrade 'link'  sets firmware url for next restart \n"
           " rm -rf              chill this just clears preferences\n\n\n" );
@@ -787,13 +765,13 @@ void wstas() {    //  this spawns webserial and handles all web stuff
     } else {
       ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
     }
-  });    //  attach message callback
+  });
 
-  ws.begin(&server);    //  init webserial
+  ws.begin(&server);    //  all callbacks are atteched so init webserial here
 
 
   server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
-    char buff[16]; snprintf(buff, sizeof(buff), "%u", prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
+    char buff[16]; snprintf(buff, sizeof(buff), "%u", nvs::prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
   });
 
   server.on("/file", HTTP_POST,
@@ -801,7 +779,7 @@ void wstas() {    //  this spawns webserial and handles all web stuff
     [&ws](AsyncWebServerRequest *request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
     static size_t totalSize = 0;    //  static so this is not reset on each chunck
     static char slot[12];    // static to persist across chunks this max is 'profile'
-    static uint8_t rcvbuff[15000];    // static buffer allocated once
+    static uint8_t rcvbuff[15000];    // static buffer allocated once  todo perhaps move this to psram later
 
     if (!index){
       totalSize = request->header("Content-Length").toInt();
@@ -818,17 +796,26 @@ void wstas() {    //  this spawns webserial and handles all web stuff
     if (final){    //  just save the recieved buffer to nvs
       //prefs.putBytes( (strcmp(slot, "profile") ? strcat(slot, "slot") : "0profile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to 0-7 for foto slots
       //ws.print("file saved to " + String(slot));
-      
-      prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
-      ws.print("file saved to " + String(slot));
-      if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
-        prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
+
+      if ( !strcmp(slot, "profile") ) {    //  either save to local profile or to slot number
+        nvs::prefs.putBytes("localprofile", &rcvbuff, sizeof(rcvbuff));    //  write profile to nvs at 'profile' position
+      } 
+      else  {
+        nvs::appendslot(slot, &rcvbuff);    //  write foto to nvs at slot position
+      }
+      ws.print("foto saved to " + String(slot));
+
+
+      //prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
+      //ws.print("file saved to " + String(slot));
+      //if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
+      //  prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
         
         
-        // TODO remove this xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots 
+      // TODO remove this xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots 
         
         
-        ws.print("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
+       // ws.print("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
       }
     }
   });
@@ -842,9 +829,9 @@ void wstas() {    //  this spawns webserial and handles all web stuff
   server.begin();
 
 
-  if ( prefs.getBytesLength("airlink") || prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
-    char airlink[256] = "";    //  instead of hardcoding the link here improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/fpaper/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/fpaper/tags' befor download and then use 'https://github.com/crbyxwpzfl/fpaper/releases/latest/download/not-merged-correct-board.bin'
-    if ( prefs.getBytes("airlink", airlink, sizeof(airlink)) ) prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
+  if ( nvs::prefs.getBytesLength("airlink") || nvs::prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
+    char airlink[256] = "todo add link to firmware here";    //  instead of hardcoding the link here improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/fpaper/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/fpaper/tags' befor download and then use 'https://github.com/crbyxwpzfl/fpaper/releases/latest/download/not-merged-correct-board.bin'
+    if ( nvs::prefs.getBytes("airlink", airlink, sizeof(airlink)) ) nvs::prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
 
     WiFiClientSecure secureClient;    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
     HTTPUpdate up;
@@ -864,11 +851,11 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
   //   ------- TODO ---------
   //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
-  uint32_t livetime = prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
+  uint32_t livetime = nvs::prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
-    logsstct logs; if( xQueueReceive( logsQueue, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
-      if ( prefsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
+    comms::logsstct logs{}; if( xQueueReceive( comms::logsq, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
+      if ( nvs::prefsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
     }
     taskYIELD();
   }
@@ -881,8 +868,6 @@ void wstas() {    //  this spawns webserial and handles all web stuff
 
 
 void showTas(void *parameter) {    //  this handles the epaper
-  showQueue = xQueueCreate(5, sizeof(showstct));    // create queue with buffer of 5
-
   static GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
   //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
@@ -894,15 +879,15 @@ void showTas(void *parameter) {    //  this handles the epaper
   char ocupado[5];    //  save the screen state either user or empty
 
   while(true){
-    showstct show; if( xQueueReceive( showQueue, &show, 0 ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
+    comms::showstct show{}; if( xQueueReceive( comms::showq, &show, 0 ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
 
-      if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(showQueue, &show, 0); continue;
+      if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(comms::showq, &show, 0); continue;
         Serial.println("did a pushback");
       }    //  this passes when no ocupado, user requests, requests with same occupation  everything else is pushed back into queue
 
       strcpy(ocupado, show.partial ? show.ocupado : "");    //  clear ocupation for full refreshes for partial refreshes ocupie screen
 
-      if (!prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this fills the showBuff with noise
+      if (!nvs::prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this fills the showBuff with noise
 
       //if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
       if (!show.partial) {    //  show with full refresh
@@ -943,12 +928,9 @@ void showTas(void *parameter) {    //  this handles the epaper
         } while (display.nextPage());
       }
 
-
-
       display.hibernate();   //  hibernate display to save power
     };
     taskYIELD();    //  more efficent vTaskDely(0)    //  befor one second so no flicker just show every thing fast user interactions
-
   }
 }
 
@@ -960,10 +942,10 @@ void servoTas(void *parameter) {    //  this handles servo movement
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
   
   while(true){
-    char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {
-      //ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
-      if (!strcmp(buff, "top")) { ledcWrite(38, prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
-      if (!strcmp(buff, "sit")) { ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
+    char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {        // -------- TODO cache top and sit aswell !! these are used frequently better to cache them hope ram is enough perhaphs cache into psram  -----------------
+      //ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, nvs::prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
+      if (!strcmp(buff, "top")) { ledcWrite(38, nvs::prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
+      if (!strcmp(buff, "sit")) { ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
     }
     taskYIELD();
   }
@@ -973,17 +955,14 @@ void servoTas(void *parameter) {    //  this handles servo movement
 
 
 void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
-
-  sendmqttQueue = xQueueCreate( 5, sizeof(sendstct) );    // create queue with buffer of 5
-
   PsychicMqttClient mqttClient;
   ChaChaPoly chachapoly;
 
   static uint8_t sendcyphy[12+16+15000+9];    //  this is the last sent message the first 12iv plus 16tag plus 15000foto plus 9profile/slot    //  this is written every outgoing message and read with every incoming so perhaps protect this with mutex/semaphore 
 
-  String serverAddress = prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
+  String serverAddress = nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
-  mqttClient.onTopic( prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
+  mqttClient.onTopic( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
 
     if ( !memcmp(sendcyphy, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
 
@@ -996,39 +975,45 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
     Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
-    for (uint32_t attempts = hkdfs.size(); attempts; attempts--) {       // a =  4, 3, 2, 1
+    for (uint32_t attempts = nvs::hkdfs.size(); attempts; attempts--) {       // a =  4, 3, 2, 1
                                                                        // key =  x, 3, 2, 1
  
       chachapoly.setIV( payload , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
-      chachapoly.setKey( hkdfs[index].data() , 32);                             Serial.println(" set key");
+      chachapoly.setKey( nvs::hkdfs[index].data() , 32);                             Serial.println(" set key");
       chachapoly.decrypt(rcvcyphy, payload + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
 
       if (!chachapoly.checkTag( payload + 12, 16)) { index = attempts -1; continue; }    //  retry
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-        char nvsalias[16]; sprintf(nvsalias, "%sprofile", peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
+        char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[index].data()); nvs::prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
         //char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
         //prefs.getBytes( std::format("{}profile", peers[index]).c_str(), temp, 15000 );
 
         Serial.println("first decryption successfull");
 
-        if ( memcmp(temp, rcvcyphy, 15000) ) prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
+        if ( memcmp(temp, rcvcyphy, 15000) ) nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
 
-        struct showstct show={ "", 1, "" }; 
-        strcpy(show.ocupado, peers[index].data()); 
-        strcpy(show.nvsalias, peers[index].data()); 
-        xQueueSend(showQueue, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beninging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        comms::toshowq(nvs::peers[index].data(), 1, nvs::peers[index].data());    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
+        //struct showstct show={ "", 1, "" }; 
+        //strcpy(show.ocupado, nvs::peers[index].data()); 
+        //strcpy(show.nvsalias, nvs::peers[index].data()); 
+        //xQueueSend(comms::showq, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beniging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
         //comm("showQueue", "param1", "param2");
 
-        xQueueSend(servoQueue, "top", 0);    //  move servo to top position this wiggles screen
+        comms::toservoq("top");    //  move servo to top position this wiggles screen
+        //xQueueSend(comms::servoq, "top", 0);    //  move servo to top position this wiggles screen
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
-        char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%slatest", peers[index].data()); prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  save foto of peer wich is 'peer+latest' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
+        char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%slatest", nvs::peers[index].data()); nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  save foto of peer wich is 'peer+latest' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
 
         Serial.println("second decryption successfull");
 
-        struct showstct show={ "", 0, "" }; strcpy(show.ocupado, peers[index].data()); strcpy(show.nvsalias, peers[index].data()); xQueueSend(showQueue, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
+        comms::toshowq(nvs::peers[index].data(), 0, nvs::peers[index].data());    //  show recieved foto with full refresh and ocupie screen with 'user' so no other message interferes
+        //struct showstct show={ "", 0, "" };
+        //strcpy(show.ocupado, nvs::peers[index].data());
+        //strcpy(show.nvsalias, nvs::peers[index].data());
+        //xQueueSend(comms::showq, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
       }
 
       chachapoly.clear(); return;    //  exit lambda
@@ -1039,21 +1024,21 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
 
   while (true) {
-    sendstct send; if( xQueueReceive( sendmqttQueue, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
+    comms::sendstct send{}; if( xQueueReceive( comms::mqsendq, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
       Serial.println("sending to " + String(peers[send.peer].data()) );
 
-      if (!prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
+      if (!nvs::prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
 
       if ( !send.peer ) {    //  when recipient local just save to local latest
-        prefs.putBytes( "locallatest", sendcyphy, 15000);    //  when recipient local save to local latest
+        nvs::prefs.putBytes( "locallatest", sendcyphy, 15000);    //  when recipient local save to local latest
       }
 
       else {        //  here when recipient not local actually do send stuff    // TODO somehow dont send full profile everytime you want to annoy
         esp_fill_random(sendcyphy, 12);    //  fill first 12 bytes of sendcyphy with noise to use as iv for chachapoly also to later in recieve mqtt determine wether message is a echo
 
         chachapoly.setIV(sendcyphy, 12);    //  use first 12 bytes of sendcyphy as iv
-        chachapoly.setKey(hkdfs[send.peer].data(), 32);    //  
+        chachapoly.setKey(nvs::hkdfs[send.peer].data(), 32);    //  
         chachapoly.encrypt( 12+16+sendcyphy, 12+16+sendcyphy, 15000);    //  encrypt clear bytes of load this was loaded into cyphy befor
 
         chachapoly.computeTag( 12+sendcyphy, 16);
@@ -1065,7 +1050,7 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         Serial.println("packed payload try sending now to " + String(peers[send.peer].data()) );    //  TODO make this a feedlog message
 
-        mqttClient.publish( prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(sendcyphy), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
+        mqttClient.publish( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(sendcyphy), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this blocks the task until notivied or timeout runs out this is to filter echos  // TODO optimization this technicaly doe not have to wait on local sends
         else { Serial.println("timeout waiting for echo\n"); }    //  TODO make this a debug log
@@ -1102,15 +1087,24 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
     prep = ++prep % (slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
 
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+      char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
+      comms::toshowq( "user", 1, nvsalias );    //  show current peer with picture in picture onece every full cycle
+      //struct showstct show={ "user", 1, "" };
+      //sprintf(show.nvsalias, "%sprofile", peers[currpeer].data());
+      //xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
+
+      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvsalias));
 
     }
     else {    //  for non zero show foto slot
-      struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%u", prep); xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
+      char nvsalias[16]; sprintf(nvsalias, "%u", prep);    //  does itoa exist for this build system 
+      comms::toshowq( "user", 1, nvsalias );    //  show foto slot with picture in picture
+      //struct showstct show={ "user", 1, "" };
+      //sprintf(show.nvsalias, "%u", prep);
+      //xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
 
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(show.nvsalias));
+      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(itoa(prep)));
 
     }
   });
@@ -1125,22 +1119,39 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       if (!prep) {    //  when prep is a peer
         //currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
         currpeer = ++currpeer % (size/16);    //  advance peer or wrap
-        struct showstct show={ "user", 1, "" }; sprintf(show.nvsalias, "%sprofile", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
+
+        char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
+        comms::toshowq( "user", 1, nvsalias );
+        //struct showstct show={ "user", 1, "" };
+        //sprintf(show.nvsalias, "%sprofile", peers[currpeer].data());
+        //xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
       }
       else {    //  when perep is a foto slot
         //if (currpeer) { struct sendstct sendprofile={ "", "localprofile" }; strcpy(sendprofile.peer, peers[currpeer]); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
-        if (currpeer) { struct sendstct sendprofile{ currpeer, "localprofile" }; xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
+        if (currpeer) {    //  first send our profile to current peer but not to local
+          comms::tomqsendq( currpeer, "localprofile" );
+          //struct sendstct sendprofile{ currpeer, "localprofile" };
+          //xQueueSend(sendmqttQueue, &sendprofile, 0); 
+        }
         //struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
-        struct sendstct sendload{ currpeer, ""}; sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
+        char nvsalias[16]; sprintf(nvsalias, "%u", prep);
+        comms::tomqsendq(currpeer, nvsalias );    //  then send prepped foto slot to current peer
+        //struct sendstct sendload{ currpeer, ""}; 
+        //sprintf(sendload.load, "%u", prep);
+        //xQueueSend(sendmqttQueue, &sendload, 0);
       }
 
       //vTaskDelay(1);    //  wait some time to let send finish and then show
       // TODO this comes to fast so dely this some how or move this line into send task
-      struct showstct show={ "user", 0, "" }; sprintf(show.nvsalias, "%slatest", peers[currpeer].data()); xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh    
+      char nvsalias[16]; // below the comma operator first does the sprintf and then returns nvsalias 
+      comms::toshowq( "user", 0, (sprintf(nvsalias, "%slatest", nvs::peers[currpeer].data()), nvsalias) );    //  show current peers latest foto with full refresh
+      //struct showstct show={ "user", 0, "" };
+      //sprintf(show.nvsalias, "%slatest", peers[currpeer].data());
+      //xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh    
 
       prep = slots;
 
-      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(show.nvsalias));    // todo make this debug
+      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvsalias));    // todo make this debug
     }
     taskYIELD();
   }
@@ -1150,20 +1161,13 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
 
 void setup() {    //  when this int main() instead this does not compile
-  
 
 
-  /* no global task handles anymore only necessary for info cmd for high water mark.
-  xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, &networkTasHandle );    //  spawn network task to connect to wifi
-  xTaskCreate( showTas, "showTas", 32768, NULL, 1, &showTasHandle );    //  spawn show task to show stuff on epaper
-  xTaskCreate( wstas, "wstas", 32768, NULL, 1, &wstasHandle );    //  spawn web task to handle all web stuff
-  xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, &servoTasHandle );    //  now spawn async tasks
-  xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, &sendmqttHandle );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
-  xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, &flanksTasHandle );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
-  */
+  //  TODO perhaps move these into tasks
+  nvs::init();    //  init prefs and loads cache values
+  comms::init();    //  init inter task message queues
+  Serial.begin(115200);    //  serial requires delay or while(!Serial) to not miss any output
 
-  Serial.begin(115200);    //  serial requires delay or while(!Serial); so no output is lost
-  //prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode this is for wifi creds and stuff
 
   xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, NULL );    //  spawn network task to connect to wifi
   xTaskCreate( wstas, "wstas", 32768, NULL, 1, NULL );    //  spawn web task to handle all web stuff
@@ -1173,15 +1177,11 @@ void setup() {    //  when this int main() instead this does not compile
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, NULL );    //  spawn show task to show stuff on epaper
 
 
-
-  // TODO MOVE THIS into wstas
-  if(!prefs.getBytesLength("peers")) { const char def[][16] = {{"local"}}; prefs.putBytes("peers", def, sizeof(def)); }
-
-
-
   Serial.println("init done");
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
+
+
 }
 
 
