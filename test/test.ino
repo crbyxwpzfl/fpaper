@@ -303,21 +303,8 @@ QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas 
 
 
 
-class nvs {
-public:
-  static std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
-  static std::vector<std::array<uint8_t, 32>> hkdfs;    
-  static uint32_t slots;
-
-  static Preferences prefs;
-
-  static void init() {
-    static bool initilised = false;
-    if (initilised) return;
-    prefs.begin("prefs", false);
-    initilised = true;
-  }
-
+class nvs {    //  this is mostly transparent and adds a cache for frequently accessed nvs values plus utils to edit these the cached values safely
+  private:
   static void cachepeers() {    //  this rechaches from nvs or inits cache with default value
     size_t pb = prefs.getBytesLength("peers");
     if (pb) {    //  either load peers into cache
@@ -330,33 +317,6 @@ public:
     }
   }
 
-  static char* appendpeer(char* peername = nullptr) {    //  this appends and writes this vector to nvs
-    std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-
-    args.copy(peername, size_t(7), 0);   // copy directly from args and leave last byte for NUL
-    peers.push_back(peer);    //  append peer to vector
-
-    prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
-
-    return peers.back().data();    //  echo added peer
-  }
-
-  static bool deletepeer(uint32_t i) {    //  this deletes a peer and writes this vector to nvs
-    peers.erase(peers.begin() + i );    //  this is slow but this is not a frequent operation
-    peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
-    return prefs.putBytes("peers", peers.data(), peers.size() * 8) == peers.size() * 8;    //  write back peer list without deleted peer to nvs
-  }
-
-  static uint32_t findpeer(char* peername = nullptr) {    //  this finds a peer in the cached vector and returns its index or zero if not found
-    size_t found; 
-    for (found = 1; found < peers.size(); ++found) {    //  find peer in list
-      if ( !strcmp(peers[found].data(), peername) ) break;
-      if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
-    }
-    return found;
-  }
-
-
   static void cachehkdfs() {
     size_t hb = prefs.getBytesLength("hkdfs");
     if (hb) {    //  either load peers into cache
@@ -368,6 +328,56 @@ public:
       prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
     }
   }
+
+  static void cacheslots() {
+    slots = prefs.getUInt("slots", 0);
+  }
+
+
+  public:
+  static inline std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
+  static inline std::vector<std::array<uint8_t, 32>> hkdfs;    
+  static inline uint32_t slots;
+
+  static inline Preferences prefs;
+
+  static void init() {
+    static bool initialised = false;
+    if (initialised) return;
+    prefs.begin("prefs", false);
+    cachepeers();
+    cachehkdfs();
+    cacheslots();
+    initialised = true;
+  }
+
+  static char* appendpeer(char* peername = nullptr) {    //  this appends and writes this vector to nvs
+    std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+
+    strncpy(peer.data(), peername ? peername : "", 7);   // copy directly from args and leave last byte for NUL
+    peers.push_back(peer);    //  append peer to vector
+
+    prefs.putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
+
+    return peers.back().data();    //  echo added peer
+  }
+
+  static bool deletepeer(uint32_t i) {    //  this deletes a peer and writes this vector to nvs
+    if (i > peers.size() || !i) return false;    //  invalid index
+    peers.erase(peers.begin() + i );    //  this is slow but this is not a frequent operation
+    peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+    return prefs.putBytes("peers", peers.data(), peers.size() * 8) == peers.size() * 8;    //  write back peer list without deleted peer to nvs
+  }
+
+  static uint32_t findpeer(const char* peername) {    //  this finds a peer in the cached vector and returns its index or zero if not found
+    if (!peername) return 0;
+    
+    for (size_t i = 1; i < peers.size(); ++i) {    //  find peer in list
+        if (!strcmp(peers[i].data(), peername)) return i;
+    }
+    return 0;  // Not found
+}
+
 
   static uint8_t* appendhkdf(char* secret = nullptr) {    //  this appends and writes this vector to nvs
     std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
@@ -387,12 +397,7 @@ public:
   }
 
 
-
-  static void cacheslots() {
-    slots = prefs.getUInt("slots", 0);
-  }
-
-  static uint32_t deleteslot(uint32_t delslot) {
+  static uint32_t deleteslot(uint32_t delslot) {    //  this deletes a slot and writes this count into nvs
     if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
     
     char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
@@ -404,14 +409,19 @@ public:
       prefs.putBytes( delslotchar , temp, sizeof(temp) );    //  copy temp to target slot
     }
     prefs.remove( slotschar );    //  remove top most slot
-    prefs.putUInt("slots", slots -1);    //  adjust / save slots count
-    
+    slots--;
+    prefs.putUInt("slots", slots);    //  adjust / save slots count
+
     return delslot;    //  echo deleted slot to confirm
   }
 
-  static uint32_t appendslot(uint8_t* foto) {  // TODO perhoas do the nvs write of the foto here
-    slots += 1;
-    prefs.putUInt("slots", slots);
+  static uint32_t appendslot(char* slotchar, uint8_t* foto) {    //  this overwrites or adds a foto to nvs and writes corrected count to nvs
+    uint32_t slotint = strtoul(slotchar, NULL, 10);
+    if (slotint > slots) {
+      slots = slotint;
+      prefs.putUInt("slots", slots);
+    }
+    prefs.putBytes( slotchar , foto, 15000);    //  write foto to nvs at slot position
     return slots;    //  echo slot count to confirm
   }
 }
