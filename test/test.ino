@@ -180,7 +180,65 @@ class LogsQueue {
 
 
 
+// ---------- most flexible essentially as if all this was global but wrapped in a class is this bad design? -----------
+class comms {    //  this is for all the inter task communication via queues
+  public:
+  inline static QueueHandle_t logsq = nullptr;    //  provide public access to the queue handles instead of private and access functions
+  inline static QueueHandle_t showq = nullptr;    // c++17 inline variable avoids static member definition at global scope
+  inline static QueueHandle_t mqsendq = nullptr;
+  inline static QueueHandle_t servoq = nullptr;
 
+  struct logsstct { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class
+  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };
+  struct mqsendstct { uint32_t peer; char load[16]; };
+  struct servostct { char pos[4]; };    //  no struct required for servo queue
+
+  static void init() {    //  no constructor instead have treat theses as global utils    also feels not so racey
+    static bool initialized = false;
+    if (initialized) return;
+    if (logsq == nullptr) logsq = xQueueCreate(5, sizeof(logsstct));
+    if (showq == nullptr) showq = xQueueCreate(5, sizeof(showstct));
+    if (mqsendq == nullptr) mqsendq = xQueueCreate(5, sizeof(mqsendstct));
+    if (servoq == nullptr) servoq = xQueueCreate(5, sizeof(servostct));
+    initialized = true;
+  }
+
+  static bool tologsq(uint8_t verbosity, const char* text) {
+    if (!logsq) return false;
+    logsstct log{};
+    log.verbosity = verbosity;
+    strncpy(log.text, text ? text : "", sizeof(log.text) - 1);
+    return xQueueSend(logsq, &log, 0) == pdPASS;
+  }
+
+  static bool toshowq(const char* ocupado, uint8_t partial, const char* nvsalias) {
+    if (!showq) return false;
+    showstct show{};
+    strncpy(show.ocupado, ocupado ? ocupado : "", sizeof(show.ocupado) - 1);
+    show.partial = partial;
+    strncpy(show.nvsalias, nvsalias ? nvsalias : "", sizeof(show.nvsalias) - 1);
+    return xQueueSend(showq, &show, 0) == pdPASS;
+  }
+
+  static bool tomqsendq(uint32_t peer, const char* load) {
+    if (!mqsendq) return false;
+    mqsendstct send{};
+    send.peer = peer;
+    strncpy(send.load, load ? load : "", sizeof(send.load) - 1);
+    return xQueueSend(mqsendq, &send, 0) == pdPASS;
+  }
+
+  static bool toservoq(const char* pos) {
+    if (!servoq) return false;
+    servostct servo{};
+    strncpy(servo.pos, pos ? pos : "", sizeof(servo.pos) - 1);
+    return xQueueSend(servoq, &servo, 0) == pdPASS;
+  }
+};
+// ---------------------------------------------------------------------------------------
+
+
+//  ---------- these have the issue with a localiesed struct so this would require global struct definitions ----------
 QueueHandle_t logs(uint8_t verbosity = 0, char* text = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
   struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs{};
   static QueueHandle_t logsQueue = NULL;
@@ -238,7 +296,7 @@ QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas 
   }
   return servoQueue;
 }
-
+// ---------------------------------------------------------------------------------------
 
 // ---------- TODO consider replacing this with a class like above for coherence -----------
 
