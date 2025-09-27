@@ -36,13 +36,13 @@
 #include <GxEPD2_BW.h>  //  https://github.com/ZinggJM/GxEPD2.git + https://github.com/adafruit/Adafruit-GFX-Library.git + https://github.com/adafruit/Adafruit_BusIO.git for epaper GDEY042T81 4.2" b/w 400x300, SSD1683 on elecorw CrowPanel ESP32 E-Paper HMI 4.2-inch Display
 #include <xpwallpaper.h>  //  test image bitmap
 
+#include <cstdarg>
+#include <cstdio>
 
 #include <unordered_map>    //  c++ stuff
 #include <functional>
 #include <string>
 
-//#include <string_view>
-//#include <format>    //  TODO this is huge remove this
 
 // ----------- TODO -----------
 //
@@ -95,20 +95,32 @@ class comms {    //  this is for all the inter task communication via queues    
     return xQueueSend(logsq, &log, 0) == pdPASS;
   }
 
-  static bool toshowq(const char* ocupado, uint8_t partial, const char* nvsalias) {    // TODO add an optional parameter wich gets appended to nvsalias this would greatly reduce all those temporary buffers just to append profile or latest
-    if (!showq) return false;                                                          //      also add optional parameter to pass a intager wich then gets converted to a string to use as nvs key this also would reduce clutter for callers
+  static bool toshowq(const char* ocupado, uint8_t partial, const char* format, ...) {
+    if (!showq) return false;
+    
     showstct show{};
     strncpy(show.ocupado, ocupado ? ocupado : "", sizeof(show.ocupado) - 1);
     show.partial = partial;
-    strncpy(show.nvsalias, nvsalias ? nvsalias : "", sizeof(show.nvsalias) - 1);
+
+    va_list args;    //  this is basicly a snprintf into the struct member
+    va_start(args, format);
+    vsnprintf(show.nvsalias, sizeof(show.nvsalias), format, args);
+    va_end(args);
+
     return xQueueSend(showq, &show, 0) == pdPASS;
   }
 
-  static bool tomqsendq(uint32_t peer, const char* load) {                            //  see above TODOS
+  static bool tomqsendq(uint32_t peer, const char* format, ...) {
     if (!mqsendq) return false;
+    
     mqsendstct send{};
     send.peer = peer;
-    strncpy(send.load, load ? load : "", sizeof(send.load) - 1);
+
+    va_list args;    //  this is basicly a snprintf into the struct member
+    va_start(args, format);
+    vsnprintf(send.load, sizeof(send.load), format, args);
+    va_end(args);
+
     return xQueueSend(mqsendq, &send, 0) == pdPASS;
   }
 
@@ -541,19 +553,6 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
         nvs::appendslot(slot, rcvbuff);    //  write foto to nvs at slot position alias &rcvbuff[0]
       }
       ws.print("foto saved to " + String(slot));
-
-
-      //prefs.putBytes( (strcmp(slot, "profile") ? slot : "localprofile") , rcvbuff, sizeof(rcvbuff));    //  save profile to 'local profile' or save foto to slot
-      //ws.print("file saved to " + String(slot));
-      //if (strcmp(slot, "profile") && strtoul(slot, NULL, 10) > prefs.getUInt("slots", 0)) {
-      //  prefs.putUInt("slots", strtoul(slot, NULL, 10));    //  update slot count when new slot added
-        
-        
-      // TODO remove this xTaskNotifyGive(flanksTasHandle);    //  notify flanks task to reload slots 
-        
-        
-       // ws.print("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
-      //}
     }
   });
 
@@ -586,8 +585,6 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   }
 
 
-  //   ------- TODO ---------
-  //   build a timer to shutoff webpage after a time eg. server.end() MDNS.stopp() webserial.end() and so on
   uint32_t livetime = nvs::prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
@@ -597,7 +594,9 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     taskYIELD();
   }
 
-  server.end();    //  stop server so callback are unregistered so ws is not used anymore
+  // TODO perhaps also do ws.stop() to stop webserial ?? is this a function ? 
+  MDNS.end();    //  stop mDNS responder
+  server.end();    //  stop server so callbacks are unregistered so ws is not used anymore
   vTaskDelete(NULL);     //  safe to delete task and destroy ws
 }
 
@@ -724,23 +723,16 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
       if (!chachapoly.checkTag( payload + 12, 16)) { index = attempts -1; continue; }    //  retry
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
-        char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[index].data()); nvs::prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'
+        char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[index].data()); nvs::prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'  TODO this or below decide!
         //char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
-        //prefs.getBytes( std::format("{}profile", peers[index]).c_str(), temp, 15000 );
 
         Serial.println("first decryption successfull");
 
         if ( memcmp(temp, rcvcyphy, 15000) ) nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
 
-        comms::toshowq(nvs::peers[index].data(), 1, nvs::peers[index].data());    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
-        //struct showstct show={ "", 1, "" }; 
-        //strcpy(show.ocupado, nvs::peers[index].data()); 
-        //strcpy(show.nvsalias, nvs::peers[index].data()); 
-        //xQueueSend(comms::showq, &show, 0);    //  make sure peers[index] is null terminated. .data() just points to beniging and str ops go untill '\0'.  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
-        //comm("showQueue", "param1", "param2");
+        comms::toshowq(nvs::peers[index].data(), 1, "%s", nvs::peers[index].data());    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
 
         comms::toservoq("top");    //  move servo to top position this wiggles screen
-        //xQueueSend(comms::servoq, "top", 0);    //  move servo to top position this wiggles screen
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
@@ -748,11 +740,7 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         Serial.println("second decryption successfull");
 
-        comms::toshowq(nvs::peers[index].data(), 0, nvs::peers[index].data());    //  show recieved foto with full refresh and ocupie screen with 'user' so no other message interferes
-        //struct showstct show={ "", 0, "" };
-        //strcpy(show.ocupado, nvs::peers[index].data());
-        //strcpy(show.nvsalias, nvs::peers[index].data());
-        //xQueueSend(comms::showq, &show, 0);    //  show recieved latest foto with full refresh to clear profile this also frees occupation
+        comms::toshowq(nvs::peers[index].data(), 0, "%s", nvs::peers[index].data());    //  show recieved foto with full refresh and ocupie screen with 'user' so no other message interferes
       }
 
       chachapoly.clear(); return;    //  exit lambda
@@ -782,8 +770,6 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         chachapoly.computeTag( 12+sendcyphy, 16);
         chachapoly.clear();
-
-        //memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
         memcpy(sendcyphy + 12 + 16 + 15000, strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
@@ -826,24 +812,15 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
     prep = ++prep % (nvs::slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
+      comms::toshowq( "user", 1, "%sprofile", nvs::peers[currpeer].data());    //  show current peer with picture in picture onece every full cycle
 
-      char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
-      comms::toshowq( "user", 1, nvsalias );    //  show current peer with picture in picture onece every full cycle
-      //struct showstct show={ "user", 1, "" };
-      //sprintf(show.nvsalias, "%sprofile", peers[currpeer].data());
-      //xQueueSend(showQueue, &show, 0);    //  show current peer with picture in picture onece every full cycle
-
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvsalias));
+      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvs::peers[currpeer].data()) + "profile");
 
     }
     else {    //  for non zero show foto slot
-      char nvsalias[16]; sprintf(nvsalias, "%u", prep);    //  does itoa() exist for this build system 
-      comms::toshowq( "user", 1, nvsalias );    //  show foto slot with picture in picture
-      //struct showstct show={ "user", 1, "" };
-      //sprintf(show.nvsalias, "%u", prep);
-      //xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
+      comms::toshowq( "user", 1, "%u", prep );    //  show foto slot with picture in picture
 
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvsalias));
+      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(prep));
 
     }
   });
@@ -856,41 +833,23 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       lastpress = 0;    //  disarm this until real press
 
       if (!prep) {    //  when prep is a peer
-        //currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
         currpeer = ++currpeer % (nvs::peers.size()/16);    //  advance peer or wrap
-
-        char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
-        comms::toshowq( "user", 1, nvsalias );
-        //struct showstct show={ "user", 1, "" };
-        //sprintf(show.nvsalias, "%sprofile", peers[currpeer].data());
-        //xQueueSend(showQueue, &show, 0);    //  show the advanced peers profile with picture in picture
+        comms::toshowq( "user", 1, "%sprofile", nvs::peers[currpeer].data());
       }
       else {    //  when perep is a foto slot
-        //if (currpeer) { struct sendstct sendprofile={ "", "localprofile" }; strcpy(sendprofile.peer, peers[currpeer]); xQueueSend(sendmqttQueue, &sendprofile, 0); }    //  first send our profile to current peer but not to local
         if (currpeer) {    //  first send our profile to current peer but not to local
           comms::tomqsendq( currpeer, "localprofile" );
-          //struct sendstct sendprofile{ currpeer, "localprofile" };
-          //xQueueSend(sendmqttQueue, &sendprofile, 0); 
         }
-        //struct sendstct sendload; strcpy(sendload.peer,  peers[currpeer]); sprintf(sendload.load, "%u", prep); xQueueSend(sendmqttQueue, &sendload, 0);    //  then send prepped foto slot to current peer
-        char nvsalias[16]; sprintf(nvsalias, "%u", prep);
-        comms::tomqsendq(currpeer, nvsalias );    //  then send prepped foto slot to current peer
-        //struct sendstct sendload{ currpeer, ""}; 
-        //sprintf(sendload.load, "%u", prep);
-        //xQueueSend(sendmqttQueue, &sendload, 0);
+        comms::tomqsendq( currpeer, "%u", prep );    //  then send prepped foto slot to current peer
       }
 
       //vTaskDelay(1);    //  wait some time to let send finish and then show
       // TODO this comes to fast so dely this some how or move this line into send task
-      char nvsalias[16]; // below the comma operator first does the sprintf and then returns nvsalias 
-      comms::toshowq( "user", 0, (sprintf(nvsalias, "%slatest", nvs::peers[currpeer].data()), nvsalias) );    //  show current peers latest foto with full refresh
-      //struct showstct show={ "user", 0, "" };
-      //sprintf(show.nvsalias, "%slatest", peers[currpeer].data());
-      //xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh    
+      comms::toshowq( "user", 0, "%slatest", nvs::peers[currpeer].data() );    //  show current peers latest foto with full refresh
 
       prep = nvs::slots;
 
-      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvsalias));    // todo make this debug
+      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvs::peers[currpeer].data()) + "latest");    // todo make this debug
     }
     taskYIELD();
   }

@@ -9,19 +9,15 @@ todo - curretnly 200KB ram is free this is not too much consider moving stuff to
 
 todo - perhpas reduce app partion to 1MB and increase nvs space to 4MB to allow more foto space
 
-todo - pass pointer to peers and hkdf list instead of creating local copies in flanksTas and mqttTas
-
-todo - perhaps pass prefs and task/queue handles as parameters
-
-todo - stop using arduino Strings hopfully this is not just esoteric
+todo - pass pointer to logs and dont hard code a max text size in logsqueue but this is harder on heap
 
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
 
-todo - read as much prefs stuff into memory as feasable instead of constantly hitting nvs
+todo - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
 
-planed - do not hardcode firmware link istead querry latest release and compare to current version
+todo - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
 
-planed - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
+vision - do not hardcode firmware link istead querry latest release and compare to current version
 
 vision - this perhaps is stoopid but somehow encrypt hkdfs until used so a leak/dump is not catastrophic
 
@@ -29,11 +25,9 @@ vision - replace prefs. reads and puts with perhpas rtos message buffers for thr
 
 vision - forward secrecy and somthing like diffi hellman/newhope/kyber
 
-vision - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
-
 vision - use encryption of nvs
 
-vision - auto restart on connection loss
+vision - auto recover from connection loss
 
 
 this is the current custom partition no spiffs!! also always set app0 at 0x10000 otherwise merged.bin is broken
