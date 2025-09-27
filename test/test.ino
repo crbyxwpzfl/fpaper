@@ -65,63 +65,6 @@
 
 
 
-/* -------- cleaner API but this keeps lastReceived in memory even when not needed ---------
-class LogsQueue {
-private:
-  struct LogMessage { uint8_t verbosity; char text[40]; } lastReceived{};    //  declares and zero initializes a instance of struct
-  inline static QueueHandle_t queue = nullptr;    // c++17 inline variable avoids static member definition at global scope
-
-public:
-  LogsQueue() {    //  constructor creates queue when not yet created this feels racey
-      if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
-  }
-
-  bool send(uint8_t verbosity, const char* text) {
-      if (!queue) return false;
-      LogMessage msg{};
-      msg.verbosity = verbosity;
-      strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-      msg.text[sizeof(msg.text) - 1] = '\0';
-      return xQueueSend(queue, &msg, 0) == pdPASS;
-  }
-
-  bool receive(TickType_t timeout = 0) {
-      if (!queue) return false;
-      return xQueueReceive(queue, &lastReceived, timeout) == pdPASS;
-  }
-
-  uint8_t verbosity() const { return lastReceived.verbosity; }
-  const char* text() const { return lastReceived.text; }
-};
- ------------------------------------------------------------------ */
-
-
-
-/*  --------- more flexible API but a class for this feels overkill esentially this is a global struct plus the function from below ---------
-class LogsQueue {
-  private:
-  inline static QueueHandle_t queue = nullptr;    // c++17 inline variable avoids static member definition at global scope
-
-  public:
-  struct LogMessage { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class
-
-  LogsQueue() {    //  constructor creates queue when not yet created    this feels racey
-    if (queue == nullptr) queue = xQueueCreate(5, sizeof(LogMessage));
-  }
-
-  bool send(uint8_t verbosity, const char* text) {
-    if (!queue) return false;
-    LogMessage msg{};
-    msg.verbosity = verbosity;
-    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-    return xQueueSend(queue, &msg, 0) == pdPASS;
-  }
-
-  QueueHandle_t getHandle() const { return queue; }    //  provide access to the queue handle
-};
-  ---------------------------------------------------------------- */
-
-
 class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
   public:
   inline static QueueHandle_t logsq = nullptr;    //  provide public access to the queue handles instead of private and access functions
@@ -129,7 +72,7 @@ class comms {    //  this is for all the inter task communication via queues    
   inline static QueueHandle_t mqsendq = nullptr;
   inline static QueueHandle_t servoq = nullptr;
 
-  struct logsstct { uint8_t verbosity; char text[40]; };    //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
+  struct logsstct { uint8_t verbosity; char feed[40]; };    //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
   struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };
   struct mqsendstct { uint32_t peer; char load[16]; };
   struct servostct { char pos[4]; };    //  no struct required for servo queue
@@ -148,7 +91,7 @@ class comms {    //  this is for all the inter task communication via queues    
     if (!logsq) return false;
     logsstct log{};
     log.verbosity = verbosity;
-    strncpy(log.text, text ? text : "", sizeof(log.text) - 1);
+    strncpy(log.feed, text ? text : "", sizeof(log.feed) - 1);
     return xQueueSend(logsq, &log, 0) == pdPASS;
   }
 
@@ -176,68 +119,6 @@ class comms {    //  this is for all the inter task communication via queues    
     return xQueueSend(servoq, &servo, 0) == pdPASS;
   }
 };
-// ---------------------------------------------------------------------------------------
-
-
-/*  ---------- these have the issue with a localiesed struct so this would require global struct definitions ----------
-QueueHandle_t logs(uint8_t verbosity = 0, char* text = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct logsstct { uint8_t verbosity = verbosity; char text[40] = text; } logs{};
-  static QueueHandle_t logsQueue = NULL;
-
-  if (logsQueue == NULL ) {    //  create queue when not yet created
-    logsQueue = xQueueCreate(5, sizeof(logsstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
-  } else {
-    logs.verbosity = verbosity;
-    strncpy(logs.text, text, sizeof(logs.text));
-    xQueueSend(logsQueue, &logs, 0);    //  do not block if queue is full
-  }
-  return logsQueue;
-}
-
-
-QueueHandle_t shows(char* ocupado = nullptr, uint8_t partial = 0, char* nvsalias = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; } show{};
-  static QueueHandle_t showQueue = NULL;
-
-  if (showQueue == NULL ) {    //  create queue when called with NULL and not yet created
-    showQueue = xQueueCreate(5, sizeof(showstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
-  } else {
-    strncpy(show.ocupado, ocupado, sizeof(show.ocupado));
-    show.partial = partial;
-    strncpy(show.nvsalias, nvsalias, sizeof(show.nvsalias));
-    xQueueSend(showQueue, &show, 0);    //  do not block
-  }
-  return showQueue;
-}
-
-
-QueueHandle_t mqsend(uint32_t peer = 0, char* load = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  struct sendstct { uint32_t peer; char load[16]; } send{};
-  static QueueHandle_t sendQueue = NULL;
-
-  if (sendQueue == NULL ) {    //  create queue when called the first time
-    sendQueue = xQueueCreate(5, sizeof(sendstct));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
-  } else {
-    send.peer = peer;
-    strncpy(send.load, load, sizeof(send.load));
-    xQueueSend(sendQueue, &send, 0);    //  do not block if queue is full
-  }
-  return sendQueue;
-}
-
-
-QueueHandle_t servo(char* pos = nullptr) {    //  this is to send logs to wstas task non blocking with timeout so tasks do not block forever
-  static QueueHandle_t servoQueue = NULL;
-
-  if (servoQueue == NULL ) {    //  create queue when called the first time
-    servoQueue = xQueueCreate(5, sizeof(char[4]));    //  decided to use queue for coherence instead of a messagebuffer the variable length is not really a benefit here
-  } else {
-    strncpy(pos, pos, sizeof(pos));
-    xQueueSend(servoQueue, &pos, 0);    //  do not block if queue is full
-  }
-  return servoQueue;
-}
- --------------------------------------------------------------------------------------- */
 
 
 
@@ -253,8 +134,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       prefs.getBytes("peers", peers.data(), pb);
     }
     else {    //  or initialize peers with default value at index 0
-      peers.push_back("local");
-      prefs.putBytes("peers", peers.data(), peers.size() * 8);
+      appendpeer("local");
     }
   }
 
@@ -265,8 +145,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       prefs.getBytes("hkdfs", hkdfs.data(), hb);
     }
     else {    //  or initialize peers with default value at index 0
-      hkdfs.push_back({});
-      prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
+      appendhkdf("");    //  empty secret is this safe this feels like an undefinded read
     }
   }
 
@@ -297,7 +176,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     initialised = true;
   }
 
-  static char* appendpeer(char* peername = nullptr) {    //  this appends and writes this vector to nvs
+  static char* appendpeer(const char* peername = nullptr) {    //  this appends and writes this vector to nvs
     std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
 
     strncpy(peer.data(), peername ? peername : "", 7);   // copy directly from args and leave last byte for NUL
@@ -325,7 +204,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   }
 
 
-  static uint8_t* appendhkdf(char* secret = nullptr) {    //  this appends and writes this vector to nvs
+  static uint8_t* appendhkdf(const char* secret = nullptr) {    //  this appends and writes this vector to nvs
     std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
     
     hkdf<SHA256>(hkdfout.data(), 32, secret, strlen(secret), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
@@ -361,7 +240,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     return delslot;    //  echo deleted slot to confirm
   }
 
-  static uint32_t appendslot(char* slotchar, uint8_t* foto) {    //  this overwrites or adds a foto to nvs and writes corrected count to nvs
+  static uint32_t appendslot(const char* slotchar, uint8_t* foto) {    //  this overwrites or adds a foto to nvs and writes corrected count to nvs
     uint32_t slotint = strtoul(slotchar, NULL, 10);
     if (slotint > slots) {
       slots = slotint;
@@ -375,150 +254,9 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     logsverbosity = verbosity;
     return prefs.putUInt("logsverbosity", logsverbosity) == logsverbosity;
   }
-}
+};
 
 
-
-
-
-/* ---------- nvs stuff with frequently accessed keys cached inside wrapper functions  this perhpahs has a little function overhead compared to globals -----------
-Preferences& nvs() {    //  this initializes nvs namespace and provided direct access to it
-  static Preferences prefs;
-  static bool firstcall = false;
-
-  if (!firstcall) {
-    prefs.begin("prefs", false);
-    firstcall = true;
-  }
-  return prefs;
-}
-
-
-char* peerscache (uint32 i, char* peername = nullptr, char* secret = nullptr){    //  fast accessor to peers list and manage its nvs validness    hopefully this is better than reading form nvs each time
-  static std::vector<std::array<char, 8>> peers;
-
-  static bool firstcall = true;    //  static initilizes to false
-
-  if (firstcall) {
-    size_t pb = nvs().getBytesLength("peers");
-    if (pb) {    //  either load peers into cache
-      peers.resize(pb / 8);
-      nvs().getBytes("peers", peers.data(), pb);
-    }
-    else {    //  or initialize peers with default value at index 0
-      peers.push_back("local");
-      nvs().putBytes("peers", peers.data(), peers.size() * 8);
-    }
-    firstcall = false;
-  }
-
-  if (!peername && !secret) return ( i < peers.size() ) ? peers[i].data() : nullptr;    //  for out of range return nullptr
-
-  size_t found; for (found = 1; found < peers.size(); ++found) {    //  find peer in list
-    if ( !strcmp(peers[found].data(), peername) ) break;
-    if ( found == peers.size() - 1 ) found = 0;    //  mark as not found
-  }
-
-  if (!found && secret) {    //  peer not in list and secret provided so add peer here
-    std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-
-    args.copy(peername, size_t(7), 0);   // copy directly from args and leave last byte for NUL
-    peers.push_back(peer);    //  append peer to vector
-
-    nvs().putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list with new peer to nvs
-
-    hkdfscache(found, false, secret);    //  also add secret    // TODO check return here for success
-
-    return peers[found].data();    //  return added peer
-  }
-
-  if (found && !secret) {    //  peer in list and no secret provided so delete peer plus associated data here
-    peers.erase(peers.begin() + found );    //  this is slow but this is not a frequent operation
-    peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
-    nvs().putBytes("peers", peers.data(), peers.size() * 8);    //  write back peer list without deleted peer to nvs
-
-    nvs().remove( (peername + "latest").c_str() );    //  remove latest foto entry for this peer
-    nvs().remove( (peername + "profile").c_str() );    //  remove profile foto of this peer
-
-    hkdfscache(found, true, nullptr);    //  also delete secret
-
-    return peername;    //  echo deleted peer name
-  }
-
-  return nullptr;    //  peer found and secret provided perhaps add this to overwrite secret    currently user first has to delte peer and then re add him/her/they/them/it/....
-}
-
-
-uint8_t* hkdfscache (uint32 i, bool found = false, char* secret = nullptr ){    //  fast accessor to hkdfs list and manage its nvs validness    hopefully this is better than reading form nvs each time
-  static std::vector<std::array<uint8_t, 32>> hkdfs;
-
-  static bool firstcall = true;    //  static initilizes to false
-
-  if (firstcall) {
-    size_t hb = nvs().getBytesLength("hkdfs");
-    if (hb) {    //  either load peers into cache
-      hkdfs.resize(hb / 32);
-      nvs().getBytes("hkdfs", hkdfs.data(), hb);
-    }
-    else {    //  or initialize peers with default value at index 0
-      hkdfs.push_back({});
-      nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);
-    }
-    firstcall = false;
-  }
-
-  if (!found && !secret) return ( i < hkdfs.size() ) ? hkdfs[i].data() : nullptr;    //  for out of range return nullptr
-
-  if (!found && secret) {    //  add secret
-    std::array<uint8_t, 32> hkdfout{};    //  zero initialise a fixed byte array for hkdf ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-    
-    hkdf<SHA256>(hkdfout.data(), 32, secret, strlen(secret), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-    hkdfs.push_back(hkdfout);    //  append hkdf to vector
-
-    nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back hkdf list with new hkdf to nvs
-    
-    return hkdfs.back().data();    //  return added hkdf
-  }
-
-  if (found && !secret) {    //  delete secret
-    hkdfs.erase(hkdfs.begin() + i );    //  this is slow but this is not a frequent operation
-    hkdfs.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
-    nvs().putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32);    //  write back peer list without deleted peer to nvs
-    return hkdfs[i].data();
-  }
-
-  return nullptr;
-}
-
-
-uint32_t slotscache (uint32_t delslot = 0){
-  static uint32_t slots = 0;
-
-  static bool firstcall = true;
-
-  if (firstcall) {
-    slots = nvs().getUInt("slots", 0);
-    firstcall = false;
-  }
-
-  if (!delslot) return slots;    //  slots are one indexed so zero/default just wants slot count otherwise delete the provided slot but keep an interable/continuous order
-
-  if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
-
-  char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
-  char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
-
-  if (delslot != slots) {    //  swap slot with top most slot
-    uint8_t temp[15000];
-    prefs.getBytes( slotschar , temp, sizeof(temp) );    //  read top most slot into temp
-    prefs.putBytes( delslotchar , temp, sizeof(temp) );    //  copy temp to target slot
-  }
-  prefs.remove( slotschar );    //  remove top most slot
-  prefs.putUInt("slots", slots -1);    //  adjust / save slots count
-  
-  return delslot;    //  echo deleted slot to confirm
-}
- --------------------------------------------------------------------------------------- */
 
 
 
@@ -548,8 +286,7 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
 
 
 
-
-void wstas() {    //  this spawns webserial and handles all web stuff
+void wstas(void *parameter) {    //  this spawns webserial and handles all web stuff
 
   AsyncWebServer server(80);
 
@@ -801,7 +538,7 @@ void wstas() {    //  this spawns webserial and handles all web stuff
         nvs::prefs.putBytes("localprofile", &rcvbuff, sizeof(rcvbuff));    //  write profile to nvs at 'profile' position
       } 
       else  {
-        nvs::appendslot(slot, &rcvbuff);    //  write foto to nvs at slot position
+        nvs::appendslot(slot, rcvbuff);    //  write foto to nvs at slot position alias &rcvbuff[0]
       }
       ws.print("foto saved to " + String(slot));
 
@@ -816,7 +553,7 @@ void wstas() {    //  this spawns webserial and handles all web stuff
         
         
        // ws.print("updated slot count to " + String(prefs.getUInt("slots", 0)) + "\n");
-      }
+      //}
     }
   });
 
@@ -855,7 +592,7 @@ void wstas() {    //  this spawns webserial and handles all web stuff
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
     comms::logsstct logs{}; if( xQueueReceive( comms::logsq, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
-      if ( nvs::prefsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
+      if ( nvs::logsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
     }
     taskYIELD();
   }
@@ -938,14 +675,14 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 
 void servoTas(void *parameter) {    //  this handles servo movement
-  servoQueue = xQueueCreate(5, sizeof("sit"));    // create queue with buffer of 5 
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
   
   while(true){
-    char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {        // -------- TODO cache top and sit aswell !! these are used frequently better to cache them hope ram is enough perhaphs cache into psram  -----------------
+    //char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {        // -------- TODO cache top and sit aswell !! these are used frequently better to cache them hope ram is enough perhaphs cache into psram  -----------------
+    comms::servostct servo{}; if( xQueueReceive( comms::servoq, &servo, 0 ) == pdPASS ) { 
       //ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, nvs::prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
-      if (!strcmp(buff, "top")) { ledcWrite(38, nvs::prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
-      if (!strcmp(buff, "sit")) { ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
+      if (!strcmp(servo.pos, "top")) { ledcWrite(38, nvs::prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
+      if (!strcmp(servo.pos, "sit")) { ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
     }
     taskYIELD();
   }
@@ -962,6 +699,8 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
   String serverAddress = nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
 
+  TaskHandle_t sendmqttHandle = xTaskGetCurrentTaskHandle();
+
   mqttClient.onTopic( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
 
     if ( !memcmp(sendcyphy, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
@@ -977,10 +716,10 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
     for (uint32_t attempts = nvs::hkdfs.size(); attempts; attempts--) {       // a =  4, 3, 2, 1
                                                                        // key =  x, 3, 2, 1
- 
-      chachapoly.setIV( payload , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
+
+      chachapoly.setIV( reinterpret_cast<const uint8_t*>(payload) , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
       chachapoly.setKey( nvs::hkdfs[index].data() , 32);                             Serial.println(" set key");
-      chachapoly.decrypt(rcvcyphy, payload + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
+      chachapoly.decrypt(rcvcyphy, reinterpret_cast<const uint8_t*>(payload) + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
 
       if (!chachapoly.checkTag( payload + 12, 16)) { index = attempts -1; continue; }    //  retry
       
@@ -1024,9 +763,9 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
 
   while (true) {
-    comms::sendstct send{}; if( xQueueReceive( comms::mqsendq, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
+    comms::mqsendstct send{}; if( xQueueReceive( comms::mqsendq, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
-      Serial.println("sending to " + String(peers[send.peer].data()) );
+      Serial.println("sending to " + String(nvs::peers[send.peer].data()) );
 
       if (!nvs::prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
 
@@ -1044,11 +783,11 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
         chachapoly.computeTag( 12+sendcyphy, 16);
         chachapoly.clear();
 
-        memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
+        //memcpy(payload + sizeof(curriv) + sizeof(sendtag) + sizeof(sendcyphy), strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        memcpy(12 + 16 + 15000, strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
+        memcpy(sendcyphy + 12 + 16 + 15000, strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        Serial.println("packed payload try sending now to " + String(peers[send.peer].data()) );    //  TODO make this a feedlog message
+        Serial.println("packed payload try sending now to " + String(nvs::peers[send.peer].data()) );    //  TODO make this a feedlog message
 
         mqttClient.publish( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(sendcyphy), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
@@ -1076,7 +815,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
   static volatile uint32_t lastpress = 0;
 
-  static uint32_t prep = slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
+  static uint32_t prep = nvs::slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
 
   static uint32_t currpeer;    //  initially peer is local static initialises to zero
 
@@ -1085,7 +824,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
     lastpress = millis(); if (!lastpress) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
 
-    prep = ++prep % (slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
+    prep = ++prep % (nvs::slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
 
       char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
@@ -1098,13 +837,13 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
     }
     else {    //  for non zero show foto slot
-      char nvsalias[16]; sprintf(nvsalias, "%u", prep);    //  does itoa exist for this build system 
+      char nvsalias[16]; sprintf(nvsalias, "%u", prep);    //  does itoa() exist for this build system 
       comms::toshowq( "user", 1, nvsalias );    //  show foto slot with picture in picture
       //struct showstct show={ "user", 1, "" };
       //sprintf(show.nvsalias, "%u", prep);
       //xQueueSend(showQueue, &show, 0);    //  show foto slot with picture in picture
 
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(itoa(prep)));
+      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvsalias));
 
     }
   });
@@ -1118,7 +857,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
       if (!prep) {    //  when prep is a peer
         //currpeer = ++currpeer % ((size/16) + 1);    //  advance peer or wrap
-        currpeer = ++currpeer % (size/16);    //  advance peer or wrap
+        currpeer = ++currpeer % (nvs::peers.size()/16);    //  advance peer or wrap
 
         char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[currpeer].data());
         comms::toshowq( "user", 1, nvsalias );
@@ -1149,7 +888,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
       //sprintf(show.nvsalias, "%slatest", peers[currpeer].data());
       //xQueueSend(showQueue, &show, 0);    //  show current peers latest foto with full refresh    
 
-      prep = slots;
+      prep = nvs::slots;
 
       Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvsalias));    // todo make this debug
     }
