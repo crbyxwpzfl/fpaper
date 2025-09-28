@@ -47,10 +47,8 @@
 // ----------- TODO -----------
 //
 //
-//  redo logging pass stuff with verobosity levels into logQueue but use timeouts so tasks do not block 
-//
-//  currently app uses ~1,2MB of flash perhaps reduce this to less than 1MB
-//  currently 200KB internal Ram is remaining this is not too much
+//  currently app uses ~1,4MB of flash perhaps reduce this to less than 1MB
+//  currently 180KB internal Ram is remaining this is not too much
 //
 //  major restructuring concerns
 //  - correct startup sequence eg wifi has to start first only then webserial and mqtt task can start
@@ -59,20 +57,19 @@
 //  currently all the app code runs on core1 so this is not an issue
 //
 //  sartup order
-//  - all tasks would like to send logs so logsQueue has to be created first and since it only is consumed with wstas add timout to xQueueSend
+//  - all tasks would like to send logs class has to be inited first
 //  - network task is required for webserial and mqtt
+
 
 
 
 
 class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
   public:
-  //inline static QueueHandle_t logsq = nullptr;  TODO rm
   inline static QueueHandle_t showq = nullptr;    //  provide public access to the queue handles instead of private and access functions
   inline static QueueHandle_t mqsendq = nullptr;    // c++17 inline variable avoids static member definition at global scope
   inline static QueueHandle_t servoq = nullptr;
 
-  //struct logsstct { uint8_t verbosity; char feed[40]; }; TODO rm
   struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };   //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
   struct mqsendstct { uint32_t peer; char load[16]; };
   struct servostct { char pos[4]; };    //  no struct required for servo queue
@@ -80,22 +77,11 @@ class comms {    //  this is for all the inter task communication via queues    
   static void init() {    //  no constructor instead have treat theses as global utils    also feels not so racey
     static bool initialized = false;
     if (initialized) return;
-    //if (logsq == nullptr) logsq = xQueueCreate(5, sizeof(logsstct));
     if (showq == nullptr) showq = xQueueCreate(5, sizeof(showstct));
     if (mqsendq == nullptr) mqsendq = xQueueCreate(5, sizeof(mqsendstct));
     if (servoq == nullptr) servoq = xQueueCreate(5, sizeof(servostct));
     initialized = true;
   }
-
-  /* TODO rm
-  static bool tologsq(uint8_t verbosity, const char* text) {
-    if (!logsq) return false;
-    logsstct log{};
-    log.verbosity = verbosity;
-    strncpy(log.feed, text ? text : "", sizeof(log.feed) - 1);
-    return xQueueSend(logsq, &log, 0) == pdPASS;
-  }
-  */
 
   static bool toshowq(const char* ocupado, uint8_t partial, const char* format, ...) {
     if (!showq) return false;
@@ -299,7 +285,6 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
   static void feed(uint8_t verbosity, const char* format, ...) {    //  todo likly always add '\r\n' so most serial monitors and webserial show line brakes correctly
     if (verbosity > nvs::logsverbosity) return;    //  skip logs above current verbosity level
 
-    // ---------- dynamic allocation version this is heavy on heap since logs are called often -----------
     va_list args;
     va_start(args, format);
 
@@ -312,13 +297,14 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
 
     if (wspointer) {
       AsyncWebSocketMessageBuffer* wsBuffer = wspointer->makeBuffer(len + 1);    //  internal buffer avoids extra copy this requires plus one for null terminator    //  todo check for alloc success
+
       vsnprintf(reinterpret_cast<char*>(wsBuffer->get()), len + 1, format, args);    //  write directly into ws buffer
 
       Serial.write(reinterpret_cast<const uint8_t*>(wsBuffer->get()), len);    //  convenient this uses the same buffer no extra copy
 
       wspointer->send(wsBuffer);    //  send the exact length no trailing null terminator    todo is this correct without null terminator
     }
-    else {    //  fallback for no webserial
+    else {    //  fallback for no webserial  todo consider a stack buffer here instead of dynamic std::string to relieve heap pressure
       std::string tmp;
       tmp.resize(len + 1);    //  resize std::string and leave space for null terminator this is required for vsnprintf
       vsnprintf(tmp.data(), len + 1, format, args);    //  format into tmp string
@@ -326,23 +312,6 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
       Serial.write(reinterpret_cast<const uint8_t*>(tmp.data()), len);
     }
     va_end(args);
-    // ---------------------------------------------------------------------------------------------------
-
-    /*  perhaps this is better first its simpler and second it reduces memory fragmentation risc
-    char buffer[80];    //  this hard coded finite length stresses me in python me no have to worry me miss python
-    va_list args;
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-
-    Serial.print(buffer);    //  always log to serial
-
-    if (!wspointer) return;    //  skip webserial if not attached
-
-    AsyncWebSocketMessageBuffer* wsBuffer = wspointer->makeBuffer(buffer.length());    //  internal websocket buffer to improve memory consumption alternative to webserial->print(....)
-    memmove(wsBuffer->get(), buffer.c_str(), buffer.length());
-    wspointer->send(wsBuffer);
-    */
   }
 };
 
@@ -379,7 +348,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
   AsyncWebServer server(80);
 
-  static WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
+  static WebSerial ws;    //  make webserial static so it can be attached to logs class
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile time initialization to reduce heap pressure/fragmentation
     {"delslot", [&](std::string args) {    //  all these conversions feel wrong
@@ -436,14 +405,15 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     }},
 
 
-    {"apt upgrade", [&](std::string args){    // TODO either try link or set to auto for hardcoded link/default link
+    {"firmware", [&](std::string args){    // TODO either try link or set to auto for hardcoded link/default link
       if (args.empty()) { ws.print("eeee apt upgrade requires a link\n"); return; }
-      if (args.length() < 256) nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  this hard coded finite length stresses me in python me no have to worry me miss python  todo make this length flexible
+      nvs::prefs.putBytes("airlink", args.c_str(), args.length());
       ws.printf("set firmware url to '%s'\n", args.c_str());
     }},
 
 
-    {"rm -rf", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
+    {"rm", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
+      if (args != "-rf") { ws.print("eeee rm requires args '-rf'\n"); return; }
       nvs::prefs.clear();
       ws.print("cleared nvs \n");
     }},
@@ -561,24 +531,24 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
           " ssid 'ssid'         sets wlan '" + nvs::prefs.getString("ssid", "N.A.") + "' \n"
           " pass 'password'     sets password \n"
                                   
-          "\nmqtt config. tell others to add '" + nvs::prefs.getString("publ", String(ESP.getEfuseMac()) ) + "' \n"
+          "\nmqtt config \n"
           " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
           " serv 'mqtt://url'    sets server " + nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
           " topic 'mqtt/topic'   sets topic '" + nvs::prefs.getString("mqtop", "fpaper/+") + "' \n"
-          //" slots 'count'        sets the available slots '" + nvs::prefs.getString("slotcount", "4") + "' \n"
 
-          "\nservo config. please take finger off before \n"
+          "\nservo config \n"
           " top  'servo pos'    sets top pos '"  + nvs::prefs.getInt("top", 0) + "' \n"
           " sit  'servo pos'    sets sit pos '"  + nvs::prefs.getInt("sit", 0) + "' \n"
 
           "\nother stuff \n"
           " help                prints this\n"
-          " info 'seconds'      see some info \n"
+          " site 'seconds'      closes site zero infinite\n"
+          " info                see some info \n"
           " publ 'text'         publish to mqtt \n"
-          " debug 'level'       sets debug level '" + nvs::prefs.getString("debuglevel", "info") + "' \n"
+          " logs 'level'        logs level '" + nvs::prefs.getString("debuglevel", "info") + "' \n"
           " restart             well this restarts \n"
-          " apt upgrade 'link'  sets firmware url for next restart \n"
-          " rm -rf              chill this just clears preferences\n\n\n" );
+          " firmware 'link'     firmware url or auto \n"
+          " rm 'flags'          chill this just clears preferences\n\n\n" );
     }}
   };
 
@@ -644,9 +614,18 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   server.begin();
 
 
-  if ( nvs::prefs.getBytesLength("airlink") || nvs::prefs.getBool("autofw", false) ) {    //  this tries auto firmware upgrade or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
-    char airlink[256] = "todo add link to firmware here";    //  instead of hardcoding the link here improve this with checking here 'https://api.github.com/repos/crbyxwpzfl/fpaper/releases/latest' or 'https://api.github.com/repos/crbyxwpzfl/fpaper/tags' befor download and then use 'https://github.com/crbyxwpzfl/fpaper/releases/latest/download/not-merged-correct-board.bin'
-    if ( nvs::prefs.getBytes("airlink", airlink, sizeof(airlink)) ) nvs::prefs.remove("airlink");     //  when read successfull rm the airlink so just try this once when not successfull leave buffer alone
+  if ( nvs::prefs.getBytesLength("airlink") ) {    //  this tries auto firmware link or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
+    size_t len = nvs::prefs.getBytesLength("airlink");
+    char *airlink = (char*) malloc(len);    //  todo check for alloc success
+    nvs::prefs.getBytes("airlink", airlink, len);    //  read link from nvs
+    if ( !strcmp(airlink, "auto") ) { 
+      const char* autolink = "hard coded default link here";  //  todo add default link here perhaps with
+      airlink = (char*) realloc(airlink, sizeof(autolink) +1);
+      strcpy(airlink, autolink);
+    }
+    else {
+      nvs::prefs.remove("airlink");    //  when not auto rm the airlink so just try this once
+    }
 
     WiFiClientSecure secureClient;    //  replace all this with this here https://github.com/espressif/arduino-esp32/tree/master/libraries/Update/examples/HTTPS_OTA_Update
     HTTPUpdate up;
@@ -661,24 +640,14 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   
     //ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");
     ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
+    free(airlink);
   }
 
+  if ( !nvs::prefs.getUInt("wsalivesec", 0) ) vTaskSuspend(NULL);    //  when zero do not timeout webserial suuspend does not free memory so this is save for the callbacks aboveus perhaps vTaskDelete(NULL) is also find but this frees stack of this task
 
-  uint32_t livetime = nvs::prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
-  uint32_t inittimestamp = millis();
-  while ( !livetime || (millis() - inittimestamp) < livetime ) {
-    
-    /* TODO rm
-    comms::logsstct logs{}; if( xQueueReceive( comms::logsq, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
-      if ( nvs::logsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
-    }
-    */
+  vTaskDelay( nvs::prefs.getUInt("wsalivesec", 0) * 1000UL );    //  yield unitl wstime seconds elapsed then clean up webserial and stop web interface
 
-    taskYIELD();
-  }
-
-  // TODO perhaps also do ws.stop() to stop webserial ?? is this a function ?
-  logs::detachews();    //  detach webserial from logs so no more webserial logging
+  logs::detachews();    //  detach webserial from logs so no more webserial calls    todo webserial is static so even wehn task is deleted webserial is still in scope right hope this is fine
   MDNS.end();    //  stop mDNS responder
   server.end();    //  stop server so callbacks are unregistered so ws is not used anymore
   vTaskDelete(NULL);     //  safe to delete task and destroy ws
@@ -946,6 +915,7 @@ void setup() {    //  when this int main() instead this does not compile
 
 
   //  TODO perhaps move these into tasks
+  logs::init();    //  init logs and serial
   nvs::init();    //  init prefs and loads cache values
   comms::init();    //  init inter task message queues
   Serial.begin(115200);    //  serial requires delay or while(!Serial) to not miss any output
@@ -959,7 +929,7 @@ void setup() {    //  when this int main() instead this does not compile
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, NULL );    //  spawn show task to show stuff on epaper
 
 
-  Serial.println("init done");
+  logs::feed(logs::info, "init done");
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
 
@@ -969,4 +939,4 @@ void setup() {    //  when this int main() instead this does not compile
 
 
 
-void loop() {vTaskSuspend(NULL);}    //  all done in tasks so suspend loop
+void loop() {vTaskSuspend(NULL);}    //  all done in tasks so suspend loop    todo is it possible to do vTaskDelete(NULL) here
