@@ -67,26 +67,27 @@
 
 class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
   public:
-  inline static QueueHandle_t logsq = nullptr;    //  provide public access to the queue handles instead of private and access functions
-  inline static QueueHandle_t showq = nullptr;    // c++17 inline variable avoids static member definition at global scope
-  inline static QueueHandle_t mqsendq = nullptr;
+  //inline static QueueHandle_t logsq = nullptr;  TODO rm
+  inline static QueueHandle_t showq = nullptr;    //  provide public access to the queue handles instead of private and access functions
+  inline static QueueHandle_t mqsendq = nullptr;    // c++17 inline variable avoids static member definition at global scope
   inline static QueueHandle_t servoq = nullptr;
 
-  struct logsstct { uint8_t verbosity; char feed[40]; };    //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
-  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };
+  //struct logsstct { uint8_t verbosity; char feed[40]; }; TODO rm
+  struct showstct { char ocupado[5]; uint8_t partial; char nvsalias[16]; };   //  make struct public so it can be used outside of class    this hard coded finite length stresses me in python me no have to worry me miss python
   struct mqsendstct { uint32_t peer; char load[16]; };
   struct servostct { char pos[4]; };    //  no struct required for servo queue
 
   static void init() {    //  no constructor instead have treat theses as global utils    also feels not so racey
     static bool initialized = false;
     if (initialized) return;
-    if (logsq == nullptr) logsq = xQueueCreate(5, sizeof(logsstct));
+    //if (logsq == nullptr) logsq = xQueueCreate(5, sizeof(logsstct));
     if (showq == nullptr) showq = xQueueCreate(5, sizeof(showstct));
     if (mqsendq == nullptr) mqsendq = xQueueCreate(5, sizeof(mqsendstct));
     if (servoq == nullptr) servoq = xQueueCreate(5, sizeof(servostct));
     initialized = true;
   }
 
+  /* TODO rm
   static bool tologsq(uint8_t verbosity, const char* text) {
     if (!logsq) return false;
     logsstct log{};
@@ -94,6 +95,7 @@ class comms {    //  this is for all the inter task communication via queues    
     strncpy(log.feed, text ? text : "", sizeof(log.feed) - 1);
     return xQueueSend(logsq, &log, 0) == pdPASS;
   }
+  */
 
   static bool toshowq(const char* ocupado, uint8_t partial, const char* format, ...) {
     if (!showq) return false;
@@ -272,6 +274,81 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
 
 
 
+class logs {    //  this is for logging to serial and perhaps webserial with verbosity levels
+  private:
+  inline static WebSerial* wspointer = nullptr;    //  webserial instance is declared and initialized in wstas() logs may use this via reference to also log to webserial
+
+  public:
+  enum level { error, warn, info, debug };    //  verbosity levels
+
+  static void init(WebSerial* ws = nullptr) {    //  no constructor instead have treat theses as global utils    also feels not so racey
+    static bool initialized = false;
+    if (initialized) return;
+    Serial.begin(115200);
+    initialized = true;
+  }
+
+  static void attachws(WebSerial* ws = nullptr) {
+    wspointer = ws;
+  }
+
+  static void detachews() {
+    wspointer = nullptr;
+  }
+
+  static void feed(uint8_t verbosity, const char* format, ...) {    //  todo likly always add '\r\n' so most serial monitors and webserial show line brakes correctly
+    if (verbosity > nvs::logsverbosity) return;    //  skip logs above current verbosity level
+
+    // ---------- dynamic allocation version this is heavy on heap since logs are called often -----------
+    va_list args;
+    va_start(args, format);
+
+    va_list msglen;
+    va_copy(msglen, args);
+    int len = vsnprintf(nullptr, 0, format, msglen);    //  find required size
+    va_end(msglen);
+
+    if (len < 0) { va_end(args); return; }    //  encoding error
+
+    if (wspointer) {
+      AsyncWebSocketMessageBuffer* wsBuffer = wspointer->makeBuffer(len + 1);    //  internal buffer avoids extra copy this requires plus one for null terminator    //  todo check for alloc success
+      vsnprintf(reinterpret_cast<char*>(wsBuffer->get()), len + 1, format, args);    //  write directly into ws buffer
+
+      Serial.write(reinterpret_cast<const uint8_t*>(wsBuffer->get()), len);    //  convenient this uses the same buffer no extra copy
+
+      wspointer->send(wsBuffer);    //  send the exact length no trailing null terminator    todo is this correct without null terminator
+    }
+    else {    //  fallback for no webserial
+      std::string tmp;
+      tmp.resize(len + 1);    //  resize std::string and leave space for null terminator this is required for vsnprintf
+      vsnprintf(tmp.data(), len + 1, format, args);    //  format into tmp string
+
+      Serial.write(reinterpret_cast<const uint8_t*>(tmp.data()), len);
+    }
+    va_end(args);
+    // ---------------------------------------------------------------------------------------------------
+
+    /*  perhaps this is better first its simpler and second it reduces memory fragmentation risc
+    char buffer[80];    //  this hard coded finite length stresses me in python me no have to worry me miss python
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    Serial.print(buffer);    //  always log to serial
+
+    if (!wspointer) return;    //  skip webserial if not attached
+
+    AsyncWebSocketMessageBuffer* wsBuffer = wspointer->makeBuffer(buffer.length());    //  internal websocket buffer to improve memory consumption alternative to webserial->print(....)
+    memmove(wsBuffer->get(), buffer.c_str(), buffer.length());
+    wspointer->send(wsBuffer);
+    */
+  }
+};
+
+
+
+
 void networkTas(void *parameter) {    //  this connects to wifi or spawns an access point for configuration
   WiFi.mode(WIFI_STA);
   WiFi.begin( nvs::prefs.getString("ssid", "fpaper"), nvs::prefs.getString("pass", "") );    //  return ssid from preferences nvs or return finger
@@ -302,7 +379,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
   AsyncWebServer server(80);
 
-  WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
+  static WebSerial ws;    //  first delclartion of webserial not static anymore since v8.0.0
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile time initialization to reduce heap pressure/fragmentation
     {"delslot", [&](std::string args) {    //  all these conversions feel wrong
@@ -358,21 +435,21 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       // TODO validate args and pass to mqsendq
     }},
 
-    // todo add 'apt upgrade' to set firmware url
-    {"apt upgrade", [&](std::string args){
+
+    {"apt upgrade", [&](std::string args){    // TODO either try link or set to auto for hardcoded link/default link
       if (args.empty()) { ws.print("eeee apt upgrade requires a link\n"); return; }
       if (args.length() < 256) nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  this hard coded finite length stresses me in python me no have to worry me miss python  todo make this length flexible
       ws.printf("set firmware url to '%s'\n", args.c_str());
     }},
 
-    // todo add 'rm -rf' to clear nvs prefs.clear();
-    {"rm -rf", [&](std::string args){
+
+    {"rm -rf", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
       nvs::prefs.clear();
       ws.print("cleared nvs \n");
     }},
 
-    // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
-    {"top", [&](std::string args){
+
+    {"top", [&](std::string args){    // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
       if (args.empty()) { ws.print("eeee top requires args\n"); return; }
       uint32_t pos = strtoul(args.c_str(), NULL, 10);
       if (!pos) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
@@ -518,6 +595,8 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
   ws.begin(&server);    //  all callbacks are atteched so init webserial here
 
+  logs::attachws(&ws);    //  attach webserial to logs
+
 
   server.on("/querySlots", HTTP_GET, [](AsyncWebServerRequest *request) {
     char buff[16]; snprintf(buff, sizeof(buff), "%u", nvs::prefs.getUInt("slots", 0) + 1); request->send(200, "text/plain", buff);    //  send slot count plus one so user can add new fotos
@@ -588,13 +667,18 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   uint32_t livetime = nvs::prefs.getUInt("wsalivesec", 0) * 1000UL;    //  read webserial alive time in seconds from nvs or default to forever
   uint32_t inittimestamp = millis();
   while ( !livetime || (millis() - inittimestamp) < livetime ) {
+    
+    /* TODO rm
     comms::logsstct logs{}; if( xQueueReceive( comms::logsq, &logs, 0 ) == pdPASS ) {    //  when something in logs queue do 
       if ( nvs::logsverbosity > logs.verbosity ) { ws.printf("%s\n", logs.feed); }    //  print logs when verbosity matches
     }
+    */
+
     taskYIELD();
   }
 
-  // TODO perhaps also do ws.stop() to stop webserial ?? is this a function ? 
+  // TODO perhaps also do ws.stop() to stop webserial ?? is this a function ?
+  logs::detachews();    //  detach webserial from logs so no more webserial logging
   MDNS.end();    //  stop mDNS responder
   server.end();    //  stop server so callbacks are unregistered so ws is not used anymore
   vTaskDelete(NULL);     //  safe to delete task and destroy ws
