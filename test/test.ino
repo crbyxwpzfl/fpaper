@@ -154,14 +154,14 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   }
 
   static void cachelogsverbosity() {
-    logsverbosity = prefs.getUInt("logsverbosity", 0);
+    logsverbosity = prefs.getUShort("logsverbosity", 0);
   }
 
   public:
   static inline std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
   static inline std::vector<std::array<uint8_t, 32>> hkdfs;    
   static inline uint32_t slots;
-  static inline uint32_t logsverbosity;    //  this is the verbosity level for logs to webserial
+  static inline uint16_t logsverbosity;    //  this is the verbosity level for logs to webserial
 
   static inline Preferences prefs;
 
@@ -250,9 +250,9 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     return slots;    //  echo slot count to confirm
   }
 
-  static bool putlogsverbosity(uint32_t verbosity) {    //  this sets the logs verbosity level and writes it to nvs
+  static bool putlogsverbosity(uint16_t verbosity) {    //  this sets the logs verbosity level and writes it to nvs
     logsverbosity = verbosity;
-    return prefs.putUInt("logsverbosity", logsverbosity) == logsverbosity;
+    return prefs.putUShort("logsverbosity", logsverbosity) == logsverbosity;
   }
 };
 
@@ -265,7 +265,8 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
   inline static WebSerial* wspointer = nullptr;    //  webserial instance is declared and initialized in wstas() logs may use this via reference to also log to webserial
 
   public:
-  enum level { error, warn, info, debug };    //  verbosity levels
+  enum level : uint16_t { error, warn, info, debug };    //  verbosity levels
+  
 
   static void init(WebSerial* ws = nullptr) {    //  no constructor instead have treat theses as global utils    also feels not so racey
     static bool initialized = false;
@@ -282,8 +283,8 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
     wspointer = nullptr;
   }
 
-  static void feed(uint8_t verbosity, const char* format, ...) {    //  todo likly always add '\r\n' so most serial monitors and webserial show line brakes correctly
-    if (verbosity > nvs::logsverbosity) return;    //  skip logs above current verbosity level
+  static void feed(level verbosity, const char* format, ...) {    //  todo likly always add '\r\n' so most serial monitors and webserial show line brakes correctly
+    if (verbosity > nvs::logsverbosity) return;    //  do not show meassages above user verbosity level
 
     va_list args;
     va_start(args, format);
@@ -483,10 +484,10 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       ws.printf("MQTT topic set to '%s'\n", args.c_str());
     }},
 
-    {"verbosity", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee verbosity requires a level\n"); return; }
-      // nvs::putlogsverbosity();  //  TODO accept sth like warn info debug error and convert to uint32_t perhaps with a map or enum
-      ws.printf("verbosity level is '%s'\n", args.c_str());
+    {"logs", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee logs requires a level\n"); return; }
+      nvs::putlogsverbosity(args == "error" ? logs::error : args == "warn" ? logs::warn : args == "info" ? logs::info : args == "debug" ? logs::debug : 0 );    //  default to error on invalid input  this is not pretty but simple
+      ws.printf("logs level is '%u'\n", nvs::logsverbosity);
     }},
     
     {"ssid", [&](std::string args) {
@@ -508,19 +509,11 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     }},
     
     {"restart", [&](std::string args) {
-      ws.print("Restarting ESP...\n");
+      ws.print("restarting ....\n");
       ESP.restart();
     }},
     
     {"help", [&](std::string args) {
-      String peerstring = "";
-      size_t size = nvs::prefs.getBytesLength("peers");
-      char (*peers)[16] = (char (*)[16]) malloc(size);
-      nvs::prefs.getBytes("peers", peers, size);
-      if (!peers) { ws.print("failed to allocate memory for peers\n"); return; }
-      for (int i = 0; i < size/16; i++) { peerstring += String(peers[i]) + ", "; }
-      free(peers);
-
       // TODO -------- add this Serial.println(__cplusplus); // Shows C++ standard version
       //  no filepath - small snippet
       //  Serial.printf("free heap: %u\n", ESP.getFreeHeap());
@@ -531,8 +524,13 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
           " ssid 'ssid'         sets wlan '" + nvs::prefs.getString("ssid", "N.A.") + "' \n"
           " pass 'password'     sets password \n"
                                   
-          "\nmqtt config \n"
-          " peer 'name' 'secret' adds peer '" + peerstring + "' \n"
+          "\nmqtt config \n");
+      ws.print(
+          " peer 'name' 'secret' adds peer '");
+
+      for (const auto &p : nvs::peers) ws.printf("%s, ", p.data());
+
+      ws.print("' \n"
           " serv 'mqtt://url'    sets server " + nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com") + " \n"
           " topic 'mqtt/topic'   sets topic '" + nvs::prefs.getString("mqtop", "fpaper/+") + "' \n"
 
