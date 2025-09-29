@@ -59,6 +59,10 @@
 //  sartup order
 //  - all tasks would like to send logs class has to be inited first
 //  - network task is required for webserial and mqtt
+//
+// prpper boot screen would be nice eg. with  while (WiFi.status() != WL_CONNECTED) {delay(500); Serial.print("."); } and similar
+//
+
 
 
 //  ---------- key insights while testing ----------
@@ -88,12 +92,9 @@ class comms {    //  this is for all the inter task communication via queues    
   struct servostct { char pos[4]; };    //  no struct required for servo queue
 
   static void init() {    //  no constructor instead have treat theses as global utils    also feels not so racey
-    static bool initialized = false;
-    if (initialized) return;
     if (showq == nullptr) showq = xQueueCreate(5, sizeof(showstct));
     if (mqsendq == nullptr) mqsendq = xQueueCreate(5, sizeof(mqsendstct));
     if (servoq == nullptr) servoq = xQueueCreate(5, sizeof(servostct));
-    initialized = true;
   }
 
   static bool toshowq(const char* ocupado, uint8_t partial, const char* format, ...) {
@@ -179,14 +180,11 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   static inline Preferences prefs;
 
   static void init() {
-    static bool initialised = false;
-    if (initialised) return;
     prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode
     cachepeers();
     cachehkdfs();
     cacheslots();
     cachelogsverbosity();
-    initialised = true;
   }
 
   static char* appendpeer(const char* peername = nullptr) {    //  this appends and writes this vector to nvs
@@ -278,14 +276,10 @@ class logs {    //  this is for logging to serial and perhaps webserial with ver
   inline static WebSerial* wspointer = nullptr;    //  webserial instance is declared and initialized in wstas() logs may use this via reference to also log to webserial
 
   public:
-  enum level : uint16_t { error, warn, info, debug };    //  verbosity levels
-  
+  enum level : uint16_t { critical, warn, info, debug };    //  verbosity levels  critical is always shown
 
-  static void init(WebSerial* ws = nullptr) {    //  no constructor instead have treat theses as global utils    also feels not so racey
-    static bool initialized = false;
-    if (initialized) return;
-    Serial.begin(115200);
-    initialized = true;
+  static void init() {    //  no constructor instead have treat theses as global utils    also feels not so racey
+    Serial.begin(115200);    //  serial requires delay or while(!Serial) to not miss any output
   }
 
   static void attachws(WebSerial* ws = nullptr) {
@@ -339,17 +333,22 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
   if (WiFi.waitForConnectResult() != WL_CONNECTED) {    //  this waits for a default time and when not able to connect to ssid falls back to ap
     WiFi.mode(WIFI_AP);
     WiFi.softAP("fpaper", "");
-    Serial.println( nvs::prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
+    logs::feed(logs::warn, "%s failed so fallback to soft ap fpaper. access webserial at http://%s/webserial \n\r", nvs::prefs.getString("ssid", "fpaper").c_str(), WiFi.softAPIP().toString().c_str());
+    //Serial.println( nvs::prefs.getString("ssid", "fpaper") + " failed so fallback soft ap fpaper up so access webserial at http://" + WiFi.softAPIP().toString().c_str() + "/webserial \n");
     //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
   } else {
-    Serial.println( nvs::prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
+    logs::feed(logs::info, "%s success so access webserial at http://%s/webserial \n\r", nvs::prefs.getString("ssid", "fpaper").c_str(), WiFi.localIP().toString().c_str());
+    //Serial.println( nvs::prefs.getString("ssid", "fpaper") + " success so access webserial at http://" + WiFi.localIP().toString().c_str() + "/webserial \n");
     //if (MDNS.begin("fpaper")) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add service to mDNS use 'MDNS.addService("http", "tcp", 80);'
     vTaskDelete(NULL);    //  all done so delete this task
   }
 
-  Serial.println("dns for ap mode");  // make this debug only
-  DNSServer dnsServer;
-  dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
+  DNSServer dnsServer;    //  recently there was an api introduced for this see here https://github.com/espressif/arduino-esp32/blob/c2bd3c960dfcdc9dae8424452309aeef8a70a0eb/libraries/DNSServer/examples/CaptivePortal/CaptivePortal.ino#L39
+  if ( dnsServer.start(53, "*", WiFi.softAPIP()) ) {    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
+    logs::feed(logs::info, "dns server for captiveportal is up \n\r");
+  } else {
+    logs::feed(logs::critical, "eeee dns server for captiveportal failed \n\r");
+  }
   while(true){
     dnsServer.processNextRequest();
     vTaskDelay(1);    //  unlike taskYIELD() this allows idle time this auto resets watchdog otherwise it timesout or we have to feed it manually
@@ -499,7 +498,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
     {"logs", [&](std::string args) {
       if (args.empty()) { ws.print("eeeee logs requires a level\n"); return; }
-      nvs::putlogsverbosity(args == "error" ? logs::error : args == "warn" ? logs::warn : args == "info" ? logs::info : args == "debug" ? logs::debug : 0 );    //  default to error on invalid input  this is not pretty but simple
+      nvs::putlogsverbosity(args == "critical" ? logs::critical : args == "warn" ? logs::warn : args == "info" ? logs::info : args == "debug" ? logs::debug : 0 );    //  default to error on invalid input  this is not pretty but simple
       ws.printf("logs level is '%u'\n", nvs::logsverbosity);
     }},
     
@@ -517,7 +516,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     
     {"serv", [&](std::string args) {
       if (args.empty()) { ws.print("eeeee serv requires a URL\n"); return; }
-      nvs::prefs.putString("mqserv", args.c_str());
+      nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  store firmware link as well
       ws.printf("MQTT server set to '%s'\n", args.c_str());
     }},
     
@@ -565,12 +564,18 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
 
   ws.onMessage([&ws, &cmds](const std::string& stdstr) {    //  todo redo this with std::unordered_map<std::string, std::function<void(std::string_view args)> > cmds;
+
+    logs::feed(logs::debug, "recieved '%s' and", stdstr.c_str());
+
     auto pos = stdstr.find(' ');
     auto it = cmds.find(stdstr.substr(0, pos));
     if (it != cmds.end()) {
+
+      logs::feed(logs::debug, " found \n\r");
+
       it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
     } else {
-      ws.printf("'%s' is unknown try 'help'\n", stdstr.c_str() );
+      logs::feed(logs::critical, " not found try 'help' \n\r");
     }
   });
 
@@ -620,11 +625,17 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     request->send(200, "text/html", "<!DOCTYPE html><html><meta http-equiv='refresh' content='0; url=http://fpaper.local/webserial' /><head><title>Captive Portal</title></head><body><p>auto redirect failed http://" + WiFi.softAPIP().toString() + "/webserial </p></body></html>");
   });
 
-  if ( MDNS.begin("fpaper") ) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
-
+  if ( MDNS.begin("fpaper") ) {    //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
+    logs::feed(logs::info, "mdns responder is up \n\r");
+  } else {
+    logs::feed(logs::warn, "mdns responder failed \n\r");
+  }
 
   server.begin();
 
+  MDNS.addService("http", "tcp", 80);    //  adds service to device discovery mdns DS this is just for compatibility
+
+  logs::feed(logs::debug, "webserial site is up and attached to logs \n\r");
 
   if ( nvs::prefs.getBytesLength("airlink") ) {    //  this tries auto firmware link or manual link once every boot    //  this works with redirects and insecure https source 'https://github.com/espressif/arduino-esp32/issues/9530#issuecomment-2090034699'
     size_t len = nvs::prefs.getBytesLength("airlink");
@@ -644,25 +655,33 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
     secureClient.setInsecure();    //  this is to ignore ssl so theoretically some one can spoof github this is not good 
     up.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);    //  this is to follw link redirects other options are eg 'up.rebootOnUpdate(false);' or 'secureClient.setTimeout(5);'
-    up.onStart([&ws]() { ws.print("overwrite firmware init download \n"); });
-    up.onEnd([&ws]() { ws.print("firmware download success so restart to overwrite \n"); });
-    up.onError([&ws, &up](int err) { ws.print(  up.getLastErrorString() + " \n"); });
-    up.onProgress([&ws](int current, int total) { ws.print(  String(100.0 * current / total) + "% \n" ); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
+    up.onStart([&ws]() { logs::feed(logs::critical, "overwrite firmware init download \n\r"); });
+    up.onEnd([&ws]() { logs::feed(logs::critical, "firmware download success so restart to overwrite \n\r"); });
+    up.onError([&ws, &up](int err) { logs::feed(logs::critical, "eeee %s \n\r", up.getLastErrorString().c_str()); });
+    up.onProgress([&ws](int current, int total) { logs::feed(logs::info, "%d percent \n\r", 100.0 * current / total); });    //  to print percentage of download and pulse led yellow while updating perhaps prgressbar is cooler instead but have ro figure out how to do same line prints in webserial
     HTTPUpdateResult result = up.update(secureClient, airlink, "", [](HTTPClient *http) { });    //  to add sth to the http header use 'http->addHeader("Authorization", "{\"token\":\"noInitYet\"}");'
   
     //ws.print("auto firmware error (" + String(up.getLastError()) + ") " + up.getLastErrorString().c_str() + " check " + airlink.c_str() + " \n");
-    ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
+    logs::feed(logs::critical, "firmware error (%d) %s link was %s \n", up.getLastError(), up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
+    //ws.printf("auto firmware error %s link was %s \n", up.getLastErrorString().c_str(), airlink);    //  usually auto restart prevents this line so just prints when no restart cause error
     free(airlink);
+  } else { 
+    logs::feed(logs::debug, "firmware not checked no airlink \n\r");
   }
 
-  if ( !nvs::prefs.getUInt("wsalivesec", 0) ) vTaskSuspend(NULL);    //  when zero do not timeout webserial suuspend does not free memory so this is save for the callbacks aboveus perhaps vTaskDelete(NULL) is also find but this frees stack of this task
-
-  vTaskDelay( nvs::prefs.getUInt("wsalivesec", 0) * 1000UL );    //  yield unitl wstime seconds elapsed then clean up webserial and stop web interface
-
-  logs::detachews();    //  detach webserial from logs so no more webserial calls    todo webserial is static so even wehn task is deleted webserial is still in scope right hope this is fine
-  MDNS.end();    //  stop mDNS responder
-  server.end();    //  stop server so callbacks are unregistered so ws is not used anymore
-  vTaskDelete(NULL);     //  safe to delete task and destroy ws
+  uint32_t alivesecs = nvs::prefs.getUInt("wsalivesec", 0);    //  read alive seconds from nvs this is for the info cmd
+  if ( alivesecs ) {    //  yield unitl wstime seconds elapsed then clean up webserial and stop web interface
+    logs::feed(logs::info, "webserial closes after %u seconds \n\r", alivesecs);
+    vTaskDelay( alivesecs * 1000UL );
+    logs::feed(logs::info, "webserial closes immediately \n\r");
+    logs::detachews();    //  detach webserial from logs so no more webserial calls    todo webserial is static so even wehn task is deleted webserial is still in scope right hope this is fine
+    MDNS.end();    //  stop mDNS responder
+    server.end();    //  stop server so callbacks are unregistered so ws is not used anymore
+    vTaskDelete(NULL);     //  safe to delete task and destroy ws
+  } else {    //  when zero do not timeout webserial suspend does not free memory so this is save for the callbacks aboveus perhaps vTaskDelete(NULL) is also fine here that also frees stack
+    logs::feed(logs::info, "webserial stays alive forever \n\r");
+    vTaskSuspend(NULL);
+  }
 }
 
 
@@ -670,28 +689,31 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
 void showTas(void *parameter) {    //  this handles the epaper
   static GxEPD2_BW<GxEPD2_420_GDEY042T81, GxEPD2_420_GDEY042T81::HEIGHT> display(GxEPD2_420_GDEY042T81(/*CS=D8*/ 45, /*DC=D3*/ 46, /*RST=D4*/ 47, /*BUSY=D2*/ 48));
-  //char buff[20] = "";    //  buffer to read from queue has length of 15 nvs chars plus 4 for full/part
 
   pinMode(7, OUTPUT); digitalWrite(7, HIGH);   //  give power to the panel
   display.init(115200);    // init epd with 115200 baud rate
   display.setRotation(0);    //  TODO make this a setting in preferences but also change selection/ditthered overlay aspect accordingly
 
   static uint8_t showBuff[15000];
-  char ocupado[5];    //  save the screen state either user or empty
+  char ocupado[5];    //  save the screen ocupation state to prevent clashes
+
+  logs::feed(logs::debug, "screen is initialised \n\r");
+  comms::toshowq("user", false, "localprofile");    //  show local profile after restart
 
   while(true){
     comms::showstct show{}; if( xQueueReceive( comms::showq, &show, portMAX_DELAY ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
 
-      if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(comms::showq, &show, 0); continue;
-        Serial.println("did a pushback");
-      }    //  this passes when no ocupado, user requests, requests with same occupation  everything else is pushed back into queue
+      if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) {    //  this passes for no ocupado, user requests, requests with same occupation  everything else is pushed back into queue
+        xQueueSend(comms::showq, &show, 0); continue;
+        logs::feed(logs::warn, "pushback of show '%s' with occupation '%s' \n\r", show.nvsalias, show.ocupado);
+      }
 
       strcpy(ocupado, show.partial ? show.ocupado : "");    //  clear ocupation for full refreshes for partial refreshes ocupie screen
 
       if (!nvs::prefs.getBytes( show.nvsalias, showBuff, 15000 )) { Serial.println("nothing found for " + String(show.nvsalias)); esp_fill_random(showBuff, sizeof(showBuff)); }    //  for invalid nvs lookups this fills the showBuff with noise
 
       //if (strncmp(buff, "full", 4) == 0) {    //  show with full refresh
-      if (!show.partial) {    //  show with full refresh
+      if ( !show.partial ) {    //  show with full refresh
         display.setFullWindow();
         display.firstPage();
         do {
@@ -700,7 +722,7 @@ void showTas(void *parameter) {    //  this handles the epaper
         } while (display.nextPage());
       }
 
-      if ( show.partial) {    //  show picture in picture (center 100x100 of currently loaded showBuff)    //  check display.epd2.hasFastPartialUpdate with other screens
+      if ( show.partial ) {    //  show picture in picture (center 100x100 of currently loaded showBuff)    //  check display.epd2.hasFastPartialUpdate with other screens
         const int srcW = 400;
         const int srcH = 300;
         const int ovW = 230;
@@ -721,7 +743,7 @@ void showTas(void *parameter) {    //  this handles the epaper
               int bitIndex = srcY * srcW + srcX;              // 1bpp linear index
               int byteIndex = bitIndex / 8;
               uint8_t bitMask = 0x80 >> (bitIndex % 8);
-        uint8_t byteValue = showBuff[byteIndex];
+              uint8_t byteValue = showBuff[byteIndex];
               bool colored = byteValue & bitMask;             // bitmap as stored
               display.drawPixel(destX + x, destY + y, colored ? GxEPD_WHITE : GxEPD_BLACK);
             }
@@ -731,7 +753,7 @@ void showTas(void *parameter) {    //  this handles the epaper
 
       display.hibernate();   //  hibernate display to save power
     };
-    taskYIELD();    //  more efficent vTaskDely(0)    //  befor one second so no flicker just show every thing fast user interactions
+    taskYIELD();    //  more efficent than vTaskDelay(0) also fine here since this has a queue and allows idle time while waiting on queue    //  befor one second so no flicker just show every thing fast user interactions
   }
 }
 
@@ -740,10 +762,11 @@ void showTas(void *parameter) {    //  this handles the epaper
 
 void servoTas(void *parameter) {    //  this handles servo movement
   ledcAttach(38, 50, 12);    //  50hz pwm at pin 38 with 12 bit resolution so 0-4095
-  
+  logs::feed(logs::debug, "servo is initialised \n\r");
   while(true){
     //char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {        // -------- TODO cache top and sit aswell !! these are used frequently better to cache them hope ram is enough perhaphs cache into psram  -----------------
-    comms::servostct servo{}; if( xQueueReceive( comms::servoq, &servo, portMAX_DELAY ) == pdPASS ) { 
+    comms::servostct servo{}; if( xQueueReceive( comms::servoq, &servo, portMAX_DELAY ) == pdPASS ) {
+      logs::feed(logs::debug, "servo move to '%s' \n\r", servo.pos);
       //ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, nvs::prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
       if (!strcmp(servo.pos, "top")) { ledcWrite(38, nvs::prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
       if (!strcmp(servo.pos, "sit")) { ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
@@ -761,46 +784,64 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
   static uint8_t sendcyphy[12+16+15000+9];    //  this is the last sent message the first 12iv plus 16tag plus 15000foto plus 9profile/slot    //  this is written every outgoing message and read with every incoming so perhaps protect this with mutex/semaphore 
 
-  String serverAddress = nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
+  //String serverAddress = nvs::prefs.getString("mqserv", "mqtt://broker.hivemq.com"); mqttClient.setServer(serverAddress.c_str());    // thanks chatgpt but why does this work but this 'mqttClient.setServer( prefs.getString("mqserv", "mqtt://broker.emqx.io").c_str() );' not work
+  if ( nvs::prefs.getBytesLength("mqserv") ) {    //  this uses the large snedcyphy buffer temporarily as a scratch buffer to read the server address from nvs
+    nvs::prefs.getBytes("mqserv", sendcyphy, nvs::prefs.getBytesLength("mqserv"));
+  } else {
+    strcpy( (char*)sendcyphy, "mqtt://broker.hivemq.com" );    //  default server
+  }
+  mqttClient.setServer( (char*)sendcyphy );    //  set server from nvs or default
 
   TaskHandle_t sendmqttHandle = xTaskGetCurrentTaskHandle();
 
+
   mqttClient.onTopic( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
 
-    if ( !memcmp(sendcyphy, payload, 12) ) {  xTaskNotifyGive(sendmqttHandle); return;}    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
+    logs::feed(logs::debug, "mqtt message preview '%.21s' at '%s' \n\r", payload, topic);    //  for binary this prints garbage and stops with first null terminator this is acceptable
 
-    Serial.println("got message start decoding");    //  TODO make this debug
+    if ( !memcmp(sendcyphy, payload, 12) ) {    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
+      logs::feed(logs::debug, "plus this was an echo \n\r");
+      xTaskNotifyGive(sendmqttHandle);    //  free the send task early
+      return;    //  exit early for echos
+    }
 
     static uint32_t index;    //  static initialises to zero also remember last successful peer index
-
     static uint8_t rcvcyphy[15000];    //  TODO perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
     static uint8_t temp[15000];     //  see comment abouveus
 
     Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
-    for (uint32_t attempts = nvs::hkdfs.size(); attempts; attempts--) {       // a =  4, 3, 2, 1
-                                                                       // key =  x, 3, 2, 1
+    for (uint32_t attempts = nvs::hkdfs.size(); attempts; attempts--) {    //  first attempt is done with previous successful peer    peers.size() includes zero so first fail will then set index to top peer    following retries go through all peers in reverse    but dont try peer zero this is local peer so stop at peer one
 
-      chachapoly.setIV( reinterpret_cast<const uint8_t*>(payload) , 12);                                Serial.println(" set iv");    //  TODO make all this debug logs
-      chachapoly.setKey( nvs::hkdfs[index].data() , 32);                             Serial.println(" set key");
-      chachapoly.decrypt(rcvcyphy, reinterpret_cast<const uint8_t*>(payload) + 12 + 16, 15000);                 Serial.println(" decrypted cypher text");
+      chachapoly.setIV( reinterpret_cast<const uint8_t*>(payload) , 12);
+      chachapoly.setKey( nvs::hkdfs[index].data() , 32);
+      chachapoly.decrypt(rcvcyphy, reinterpret_cast<const uint8_t*>(payload) + 12 + 16, 15000);    //  do not decrypt back to payload buffer since this is const
 
-      if (!chachapoly.checkTag( payload + 12, 16)) { index = attempts -1; continue; }    //  retry
+      if (!chachapoly.checkTag( payload + 12, 16)) {    //  for failed tag retry
+        logs::feed(logs::debug, "decryption failed with peer '%s' \n\r", nvs::peers[index].data());
+        index = attempts -1;  continue;  //  decrement index and retry
+      }
       
       if ( !memcmp("look here", payload + 12 + 16 + 15000, 9) ) {    //  here compare recieved profile to saved profile and perhpas overwrite    also show recieved profile    also move servo 
+        logs::feed(logs::info, "profile decryption successful of peer '%s' \n\r", nvs::peers[index].data());
+
         char nvsalias[16]; sprintf(nvsalias, "%sprofile", nvs::peers[index].data()); nvs::prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile'  TODO this or below decide!
         //char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%.*sprofile", 8, peers[index].data()); prefs.getBytes( nvsalias, temp, 15000 );    //  read the profile of peer wich is at 'peer+profile' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
-
-        Serial.println("first decryption successfull");
-
-        if ( memcmp(temp, rcvcyphy, 15000) ) nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
+        
+        if ( memcmp(temp, rcvcyphy, 15000) ) {
+          nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  when profile changes save recieved profile to peer wich is 'peer+profile' see abouve
+          logs::feed(logs::debug, "profile of peer '%s' overwritten \n\r", nvs::peers[index].data());
+        } else {
+          logs::feed(logs::debug, "profile of peer '%s' stayes \n\r", nvs::peers[index].data());
+        }
 
         comms::toshowq(nvs::peers[index].data(), 1, "%s", nvs::peers[index].data());    //  show recieved profile with picture in picture and occupie screen with sending peer so no other message interferes
-
         comms::toservoq("top");    //  move servo to top position this wiggles screen
       }
 
       if ( !memcmp("see this ", payload + 12 + 16 + 15000, 9) ) {    //  here save recieved foto to nvsalias+'L'    also show this
+        logs::feed(logs::info, "foto decryption successful of peer '%s' \n\r", nvs::peers[index].data());
+
         char nvsalias[16]; snprintf(nvsalias, sizeof(nvsalias), "%slatest", nvs::peers[index].data()); nvs::prefs.putBytes( nvsalias, rcvcyphy, 15000 );    //  save foto of peer wich is 'peer+latest' safer version to prevent buffer overflow when peer is not null terminated this reads at most eight chars
 
         Serial.println("second decryption successfull");
@@ -808,19 +849,23 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
         comms::toshowq(nvs::peers[index].data(), 0, "%s", nvs::peers[index].data());    //  show recieved foto with full refresh and ocupie screen with 'user' so no other message interferes
       }
 
-      chachapoly.clear(); return;    //  exit lambda
+      chachapoly.clear();  return;    //  exit lambda
     }
   });
 
+
   mqttClient.connect();
+  logs::feed(logs::info, "initialised mqtt with address '%s' \n\r", (char*)sendcyphy);
 
 
   while (true) {
     comms::mqsendstct send{}; if( xQueueReceive( comms::mqsendq, &send, portMAX_DELAY ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
-      Serial.println("sending to " + String(nvs::peers[send.peer].data()) );
+      logs::feed(logs::info, "mqtt send request to peer '%s' with load '%s' \n\r", nvs::peers[send.peer].data(), send.load);    //  this prints garbage for binary data in load but this is acceptable
 
-      if (!nvs::prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) { Serial.println("nothing found for " + String(send.load)); continue; }    //  for invalid nvs lookups this returns null and leaves cyphy
+      if (!nvs::prefs.getBytes( send.load, 12+16+sendcyphy, 15000 )) {    //  for invalid nvs lookups this returns null and leaves cyphy
+        logs::feed(logs::warn, "nothing found for '%s' \n\r", send.load);  continue; 
+      }
 
       if ( !send.peer ) {    //  when recipient local just save to local latest
         nvs::prefs.putBytes( "locallatest", sendcyphy, 15000);    //  when recipient local save to local latest
@@ -838,12 +883,16 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         memcpy(sendcyphy + 12 + 16 + 15000, strcmp(send.load, "localprofile") ? "look here" : "see this ", 9);    //  send our profile with 'look here' appendix or send foto slot with 'see this'    TODO send hash of peers profile to minimize messages
 
-        Serial.println("packed payload try sending now to " + String(nvs::peers[send.peer].data()) );    //  TODO make this a feedlog message
+        logs::feed(logs::info, "packed payload try to send to peer '%s' \n\r", nvs::peers[send.peer].data());
 
         mqttClient.publish( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, 0, reinterpret_cast<const char*>(sendcyphy), 12 + 16 + 15000 + 9, true);     //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer       publish full length message to base topic
 
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) { Serial.println("seen echo or timeout over\n"); }    //  this blocks the task until notivied or timeout runs out this is to filter echos  // TODO optimization this technicaly doe not have to wait on local sends
-        else { Serial.println("timeout waiting for echo\n"); }    //  TODO make this a debug log
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(4000)) == 0) {    //  this blocks the task until notified or timeout this is to filter echos    todo optimization this technicaly does not have to wait on local sends
+          logs::feed(logs::debug, "seen echo or timeout over \n\r");
+        }
+        else { 
+          logs::feed(logs::debug, "timeout waiting for echo \n\r"); 
+        }
 
       }
 
@@ -856,7 +905,6 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
 
 void flanksTas(void *parameter) {    //  this is hopefully the same as using this lib in default asynchronous
-//void initflanks(){
 
   //static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT, 750, 250, 5000, 8000);    //  ------  TODO switch to pin 20 here -------     pin, pressed low, pin mode, longpress ms, autorepeat ms, doubleclick ms, debounce us
   static InterruptButton belowus(2, LOW, GPIO_MODE_INPUT);
@@ -865,31 +913,27 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
   //InterruptButton::setMode(Mode_Hybrid);
 
   static volatile uint32_t lastpress = 0;
-
   static uint32_t prep = nvs::slots;    //  this is the prepared thing to send or show when timer elapses initally perp last slot so first increment shows  current peer
-
   static uint32_t currpeer;    //  initially peer is local static initialises to zero
 
 
   belowus.bind(Event_KeyPress, [](){    //  this is called after double click timeout so actually do the stuff here
-
     lastpress = millis(); if (!lastpress) lastpress = 1;    //  record last press time but never zero to prevent initialisation to register as a press
 
-    prep = ++prep % (nvs::slots+1);    //  cycle trough slots zero slot is free and is reserved for current peer
+    logs::feed(logs::debug, "felt press \n\r");
+
+    prep = ++prep % (nvs::slots+1);    //  cycle trough slots    zero slot is free and is reserved for current peer
     if (!prep) {    //  for zero show current peer
+      logs::feed(logs::debug, "partial show '%sprofile' \n\r", nvs::peers[currpeer].data());
       comms::toshowq( "user", 1, "%sprofile", nvs::peers[currpeer].data());    //  show current peer with picture in picture onece every full cycle
-
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(nvs::peers[currpeer].data()) + "profile");
-
     }
     else {    //  for non zero show foto slot
+      logs::feed(logs::debug, "partial show slot '%u' \n\r", prep);
       comms::toshowq( "user", 1, "%u", prep );    //  show foto slot with picture in picture
-
-      Serial.println("prep:" + String(prep) + " currpeer:" + String(currpeer) + " trying to show " + String(prep));
-
     }
   });
 
+  logs::feed(logs::info, "initialized flanksTas \n\r");
 
   while(true){
     InterruptButton::processSyncEvents();    //  only here for synchronous or hybrid
@@ -897,24 +941,24 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
     if ( lastpress && (millis() - lastpress > 2000)) {    //  when no press for two seconds actually do the stuff here
       lastpress = 0;    //  disarm this until real press
 
-      if (!prep) {    //  when prep is a peer
+      logs::feed(logs::debug, "confirm this \n\r");
+
+      if (!prep) {    //  when prep is a peer advance peer and show this profile
         currpeer = ++currpeer % (nvs::peers.size()/16);    //  advance peer or wrap
+        logs::feed(logs::debug, "advance to peer '%s' and show this profile \n\r", nvs::peers[currpeer].data());
         comms::toshowq( "user", 1, "%sprofile", nvs::peers[currpeer].data());
       }
       else {    //  when perep is a foto slot
-        if (currpeer) {    //  first send our profile to current peer but not to local
-          comms::tomqsendq( currpeer, "localprofile" );
-        }
+        logs::feed(logs::debug, "send slot '%u' to peer '%s' \n\r", prep, nvs::peers[currpeer].data());
+        if (currpeer) comms::tomqsendq( currpeer, "localprofile" );    //  first send our profile to current peer but not for local send
         comms::tomqsendq( currpeer, "%u", prep );    //  then send prepped foto slot to current peer
       }
 
       //vTaskDelay(1);    //  wait some time to let send finish and then show
       // TODO this comes to fast so dely this some how or move this line into send task
+      logs::feed(logs::debug, "done with user input so return to '%slatest' \n\r", nvs::peers[currpeer].data());
       comms::toshowq( "user", 0, "%slatest", nvs::peers[currpeer].data() );    //  show current peers latest foto with full refresh
-
       prep = nvs::slots;
-
-      Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvs::peers[currpeer].data()) + "latest");    // todo make this debug
     }
     vTaskDelay(1);    //  unlike taskYIELD() this allows idle time this auto resets watchdog otherwise it timesout or we have to feed it manually
   }
@@ -927,11 +971,9 @@ void setup() {    //  when this int main() instead this does not compile
 
 
   //  TODO perhaps move these into tasks
-  logs::init();    //  init logs and serial
+  logs::init();    //  init logs and serial to not miss any messages this would require a delay or while(!Serial)
   nvs::init();    //  init prefs and loads cache values
   comms::init();    //  init inter task message queues
-  Serial.begin(115200);    //  serial requires delay or while(!Serial) to not miss any output
-
 
   /*
   xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, NULL );    //  spawn network task to connect to wifi
@@ -950,24 +992,7 @@ void setup() {    //  when this int main() instead this does not compile
   xTaskCreatePinnedToCore(flanksTas,  "flanksTas",    4096, NULL, 1, NULL, 1);
   xTaskCreatePinnedToCore(showTas,    "showTas",     32768, NULL, 1, NULL, 1);
 
-
-  vTaskDelay(5000);    //  wait some time to let tasks init and connect to wifi
-
-  logs::feed(logs::info, "init done");
-  
-  vTaskDelay(500);
-  logs::feed(logs::error, "this has only newline: \n after newline." );
-  vTaskDelay(500);
-  logs::feed(logs::error, "this has only cariage return: \r after return." );
-  vTaskDelay(500);
-  logs::feed(logs::error, "this has first newline than return: \n\r after newline and return." );
-  vTaskDelay(500);
-  logs::feed(logs::error, "this has first return than newline: \r\n after return and newline." );
-
-
-  // TODO add a boot screen of some sort currently the showTas does not support this 
-  //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
-
+  logs::feed(logs::info, "done setup \n\r");
 }
 
 
