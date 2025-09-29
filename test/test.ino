@@ -61,7 +61,20 @@
 //  - network task is required for webserial and mqtt
 
 
-
+//  ---------- key insights while testing ----------
+//
+// - swithcing to     // if( xQueueReceive( comms::mqsendq, &send, 0 ) == pdPASS ) { ... } xTaskYIELD();
+//   for all tasks makes the programm run in a very tight loop and starves the idle task so the watchdog is not reset and triggers
+//   before the xTaskDelay(1) would allow the idle task to run
+//   so for everytask without a queue use xTaskDelay(1) instead of taskYIELD() to allow idle task to run and reset watchdog
+//
+// - if( xQueueReceive( comms::mqsendq, &send, portMAX_DELAY ) == pdPASS ) { ... } does not block the cpu but just moves the task to waiting state until sth is in the queue
+//   this is exactly what is wanted
+//
+// - xTaskCreate does even with arduino does not place all tasks on core1 so use xTaskCreatePinnedToCore to ensure this
+//   otherwiese make sure that all recources are thread safe e.g. nvs access use semaphores or mutexes
+//
+// - MDNS is broken somehow!!
 
 
 class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
@@ -334,12 +347,12 @@ void networkTas(void *parameter) {    //  this connects to wifi or spawns an acc
     vTaskDelete(NULL);    //  all done so delete this task
   }
 
+  Serial.println("dns for ap mode");  // make this debug only
   DNSServer dnsServer;
   dnsServer.start(53, "*", WiFi.softAPIP());    //  init dns server on port 53 with wildcard domain to map all requests to ap ip for captive portal
   while(true){
-      dnsServer.processNextRequest();
-      Serial.println("dns for ap mode");  // make this debug only
-      taskYIELD();
+    dnsServer.processNextRequest();
+    vTaskDelay(1);    //  unlike taskYIELD() this allows idle time this auto resets watchdog otherwise it timesout or we have to feed it manually
   }
 }
 
@@ -609,6 +622,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
   if ( MDNS.begin("fpaper") ) { Serial.println("mDNS responder is up \n"); } //  this is to responde to fpaper.local for windows perhaps install bonjour to add a service to mDNS use 'MDNS.addService("http", "tcp", 80);'
 
+
   server.begin();
 
 
@@ -666,7 +680,7 @@ void showTas(void *parameter) {    //  this handles the epaper
   char ocupado[5];    //  save the screen state either user or empty
 
   while(true){
-    comms::showstct show{}; if( xQueueReceive( comms::showq, &show, 0 ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
+    comms::showstct show{}; if( xQueueReceive( comms::showq, &show, portMAX_DELAY ) == pdPASS ) {    //  just pops when queue not empty and returns pdPASS when something was recieved else returns pdFAIL
 
       if ( ocupado[0] && strcmp(ocupado, show.ocupado) && strcmp(show.ocupado, "user") ) { xQueueSend(comms::showq, &show, 0); continue;
         Serial.println("did a pushback");
@@ -729,7 +743,7 @@ void servoTas(void *parameter) {    //  this handles servo movement
   
   while(true){
     //char buff[4]; if( xQueueReceive( servoQueue, &buff, 0 ) == pdPASS ) {        // -------- TODO cache top and sit aswell !! these are used frequently better to cache them hope ram is enough perhaphs cache into psram  -----------------
-    comms::servostct servo{}; if( xQueueReceive( comms::servoq, &servo, 0 ) == pdPASS ) { 
+    comms::servostct servo{}; if( xQueueReceive( comms::servoq, &servo, portMAX_DELAY ) == pdPASS ) { 
       //ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); String(buf) == "top" ? ledcWrite(38, nvs::prefs.getInt("top", 0)) : ledcWrite(38, prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0);    //  move servo to poses in preferences also cool c ternary operator
       if (!strcmp(servo.pos, "top")) { ledcWrite(38, nvs::prefs.getInt("top", 0)); vTaskDelay(500); ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }   //  wigle servo to poses in preferences always top and back to sit pose
       if (!strcmp(servo.pos, "sit")) { ledcWrite(38, nvs::prefs.getInt("sit", 0)); vTaskDelay(500); ledcWrite(38, 0); }  // move servo to sit pose
@@ -802,7 +816,7 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
 
   while (true) {
-    comms::mqsendstct send{}; if( xQueueReceive( comms::mqsendq, &send, 0 ) == pdPASS ) {    //  reads first word out of queue when sth in queue
+    comms::mqsendstct send{}; if( xQueueReceive( comms::mqsendq, &send, portMAX_DELAY ) == pdPASS ) {    //  reads first word out of queue when sth in queue
 
       Serial.println("sending to " + String(nvs::peers[send.peer].data()) );
 
@@ -902,7 +916,7 @@ void flanksTas(void *parameter) {    //  this is hopefully the same as using thi
 
       Serial.println("timer up -> prep:" + String(prep) + " currpeer:" + String(currpeer) + " try to show " + String(nvs::peers[currpeer].data()) + "latest");    // todo make this debug
     }
-    taskYIELD();
+    vTaskDelay(1);    //  unlike taskYIELD() this allows idle time this auto resets watchdog otherwise it timesout or we have to feed it manually
   }
 }
 
@@ -919,18 +933,40 @@ void setup() {    //  when this int main() instead this does not compile
   Serial.begin(115200);    //  serial requires delay or while(!Serial) to not miss any output
 
 
+  /*
   xTaskCreate( networkTas, "networkTas", 8192, NULL, 1, NULL );    //  spawn network task to connect to wifi
   xTaskCreate( wstas, "wstas", 32768, NULL, 1, NULL );    //  spawn web task to handle all web stuff
   xTaskCreate( servoTas, "servoTas", 4096, NULL, 1, NULL );    //  now spawn async tasks
   xTaskCreate( sendmqttTas, "sendmqttTas", 32768, NULL, 1, NULL );    //  spawn mqtt message sender task apparently task has to have enough stack for every buffer so here > 15KB
   xTaskCreate( flanksTas, "flanksTas", 4096, NULL, 1, NULL );    //  spawn flanks task to handle presses  // TODO make stackdepth smaller perhaps
   xTaskCreate( showTas, "showTas", 32768, NULL, 1, NULL );    //  spawn show task to show stuff on epaper
+  */
 
+  // for now pin tasks to core 1 to avoid a lot of race conditions with eg. nvs access
+  xTaskCreatePinnedToCore(networkTas, "networkTas",   8192, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(wstas,      "wstas",       32768, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(servoTas,   "servoTas",     4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(sendmqttTas,"sendmqttTas", 32768, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(flanksTas,  "flanksTas",    4096, NULL, 1, NULL, 1);
+  xTaskCreatePinnedToCore(showTas,    "showTas",     32768, NULL, 1, NULL, 1);
+
+
+  vTaskDelay(5000);    //  wait some time to let tasks init and connect to wifi
 
   logs::feed(logs::info, "init done");
+  
+  vTaskDelay(500);
+  logs::feed(logs::error, "this has only newline: \n after newline." );
+  vTaskDelay(500);
+  logs::feed(logs::error, "this has only cariage return: \r after return." );
+  vTaskDelay(500);
+  logs::feed(logs::error, "this has first newline than return: \n\r after newline and return." );
+  vTaskDelay(500);
+  logs::feed(logs::error, "this has first return than newline: \r\n after return and newline." );
+
+
   // TODO add a boot screen of some sort currently the showTas does not support this 
   //memcpy_P(volatileBuff, epd_bitmap_xpwallp, 15000);    //  copy boot foto from PROGMEM to volatile buffer for fast access
-
 
 }
 
