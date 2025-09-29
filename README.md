@@ -4,18 +4,17 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+todo - MAKE EVERYTHING THREAD SAVE ESP. NVS ACCESS!
 
 todo - curretnly 200KB ram is free this is not too much consider moving stuff to PSRAM
 
 todo - perhpas reduce app partion to 1MB and increase nvs space to 4MB to allow more foto space
 
-todo - pass pointer to logs and dont hard code a max text size in logsqueue but this is harder on heap
-
 todo - add ram info and revise prefernces like rotation,btn pin, add show anything cmd,
 
-todo - fix feedlog and serial print so serial needs \r\n and silence epd and mqtt lib
+todo - silence epd and mqtt lib
 
-todo - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs)
+todo - revise boot sequence first sohw boot screen perhaps even progressbar (partial refresshs) also only start mqtt task when wifi connected ans so on
 
 vision - do not hardcode firmware link istead querry latest release and compare to current version
 
