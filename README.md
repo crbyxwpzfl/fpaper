@@ -4,7 +4,7 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
-todo - MAKE EVERYTHING THREAD SAVE ESP. NVS ACCESS!
+todo - test thread safety thoroughly esp. revise onTopic callback
 
 todo - curretnly 200KB ram is free this is not too much consider moving stuff to PSRAM
 

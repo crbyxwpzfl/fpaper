@@ -53,9 +53,6 @@
 //  major restructuring concerns
 //  - correct startup sequence eg wifi has to start first only then webserial and mqtt task can start
 //
-//  NVS ACCESS IS NOT THREAD SAFE find a solution !! eg semaphore or mutex or seperate task wich sends values back to other tasks 
-//  currently all the app code runs on core1 so this is not an issue
-//
 //  sartup order
 //  - all tasks would like to send logs class has to be inited first
 //  - network task is required for webserial and mqtt
@@ -77,6 +74,7 @@
 //
 // - xTaskCreate does even with arduino does not place all tasks on core1 so use xTaskCreatePinnedToCore to ensure this
 //   otherwiese make sure that all recources are thread safe e.g. nvs access use semaphores or mutexes
+//   this RAII nvs::prefslock is very cool and so nice to use
 //
 // - MDNS is broken somehow!!
 
@@ -133,8 +131,6 @@ class comms {    //  this is for all the inter task communication via queues    
     return xQueueSend(servoq, &servo, 0) == pdPASS;
   }
 };
-
-
 
 
 
@@ -300,7 +296,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
 
 class logs {    //  this is for logging to serial and perhaps webserial with verbosity levels
   private:
-  static SemaphoreHandle_t logmtx;
+  inline static SemaphoreHandle_t logmtx;
   inline static WebSerial* wspointer = nullptr;    //  webserial instance is declared and initialized in wstas() logs may use this via reference to also log to webserial
 
   public:
@@ -879,7 +875,7 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
     //static uint8_t rcvcyphy[15000];    //  TODO perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
     //static uint8_t temp[15000];     //  see comment abouveus
 
-    Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
+    //Serial.println("Received message on topic: " + String(topic) );     //  TODO make this a debug log
 
     for (uint32_t attempts = nvs::hkdfs.size(); attempts; attempts--) {    //  first attempt is done with previous successful peer    peers.size() includes zero so first fail will then set index to top peer    following retries go through all peers in reverse    but dont try peer zero this is local peer so stop at peer one
 
