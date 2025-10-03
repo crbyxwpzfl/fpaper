@@ -59,6 +59,20 @@
 //
 // prpper boot screen would be nice eg. with  while (WiFi.status() != WL_CONNECTED) {delay(500); Serial.print("."); } and similar
 //
+// consider mqtt features like qos, retain messages and persistent session.
+// - for public brokers i cant guarantee a any retention period for retained or queued messages.
+//
+// set a strong unique client id for mqtt to ensure broker wider unique id ids are not topic scoped!
+// - mqttClient.setClientId(const char *clientId); // has to be <23bytes UTF-8 encoded string for MQTT 3.1.1 defaults to last 3 bytes of the MAC address in hex format
+// - esp32s3 has only 6 bytes MAC see https://github.com/espressif/esp-idf/blob/800f141f94c0f880c162de476512e183df671307/components/efuse/esp32s3/esp_efuse_table.c#L694
+//
+// optimise profile foto sync
+// - currently the profile of the sender is sent with every message this is unnecessary since the profile mostly stays the same
+// - (with mqtt features) send profile once with retain flag and qos1 issue here is only one message is retained per topic so this at min requires one topic per profile and with curretn encryption even two topics per secret each conversation partner puts its profile encrypted for conversation partner into a topic
+// - (with mqtt features) send profile once with qos1 and use persistent session so the broker stores this for disconnected clients. issue here is what happens with newly joining clients? also makes session takeover (subscribing with same id) more impactful.
+// - (without mqtt features) send 
+
+
 
 
 
