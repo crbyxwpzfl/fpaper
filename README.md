@@ -138,3 +138,66 @@ esptool.py --chip esp32s3 merge_bin -o merged.bin --flash_mode qio --flash_freq 
   0x0 firmware/test.ino.bootloader.bin \
   0x8000 firmware/test.ino.partitions.bin \
   0x210000 firmware/test.ino.bin
+
+
+
+psram view - 
+```
+void setup() {
+  Serial.begin(115200);
+
+  if (psramFound()) {
+    Serial.println("PSRAM is found!");
+
+    Serial.print("Total PSRAM: ");
+    Serial.println(ESP.getPsramSize());
+
+    Serial.print("Free PSRAM: ");
+    Serial.println(ESP.getFreePsram());
+  } else {
+    Serial.println("No PSRAM available.");
+  }
+}
+```
+
+ram view - 
+```
+void setup() {
+  Serial.begin(115200);
+  
+  // Total heap available
+  Serial.print("Total heap: ");
+  Serial.println(ESP.getHeapSize());
+
+  // Free heap
+  Serial.print("Free heap: ");
+  Serial.println(ESP.getFreeHeap());
+
+  // Minimum ever free heap (worst case)
+  Serial.print("Minimum free heap: ");
+  Serial.println(ESP.getMinFreeHeap());
+
+  // Largest contiguous block that can be allocated (optional)
+  Serial.print("Max allocatable block: ");
+  Serial.println(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+```
+
+esp webrtc anywhere -https://www.reddit.com/r/esp32/comments/atnl6r/esp32_anywhere_access_webrtc_stun_turn_ice/
+
+public mwtt broker - https://www.emqx.com/en/blog/popular-online-public-mqtt-brokers
+emqx seems yo silently drop large messages hive does not
+
+
+
+
+esp webrtc plus bootstrap - https://www.hackster.io/donowak/esp32-web-server-using-bootstrap-4-and-websockets-0bf950
+
+
+esp webrtc stream - https://github.com/sepfy/libpeer/tree/main/examples/esp32
+
+
+esp husarnet tailnetlike - https://medium.com/husarion-blog/lan-network-for-microcontrollers-over-the-internet-fbcfe4c97f4b
+
+
+  
