@@ -70,10 +70,121 @@
 // - currently the profile of the sender is sent with every message this is unnecessary since the profile mostly stays the same
 // - (with mqtt features) send profile once with retain flag and qos1 issue here is only one message is retained per topic so this at min requires one topic per profile and with curretn encryption even two topics per secret each conversation partner puts its profile encrypted for conversation partner into a topic
 // - (with mqtt features) send profile once with qos1 and use persistent session so the broker stores this for disconnected clients. issue here is what happens with newly joining clients? also makes session takeover (subscribing with same id) more impactful.
-// - (without mqtt features) send 
+// - (without mqtt features) send profile on change encrypted with every secret. issue peers might be offline during this change
+//                           send profile when adding a peer encrypted with this new peers secret. requires peer to be online during add process
+// - (without mqtt features) send profilehash with every message and make reciever request profile when hash does not match. issue here is programm complexity
+//                           when adding a peer send own profile encrypted with this new peers secret.
+// - (without mqtt features) set profile foto of all peers locally and dont bother with syncing profiles at all.
 
-
-
+// - (without mqtt features) send recipient profile hash when switching to this peer or adding this peer. alias tell peer "this is your profile correct?"
+//                           answer to profile hashes with profile or nothing if hash matches.  alias tell peer "no this is my current profile" 
+//                                                                                              or dont answer meaning "this is correct i got nothing to change"
+//                           here no answer can mean peer is offline or hash matches an explicit confirmation would allow for online monitoring of peers is this a feature or should this be avoided for privacy?
+//    whith this adding a peer looks like this: A adds secretAB and sends profilehashB to B -> B does not answer to message jet
+//                                              B adds secretAB and sends profilehashA to A -> A sees mismatch and answers with profileA and also sends profilehashB to B
+//                                              B saves profileA answers with profileB -> A saves profileB
+//                                              now both have each others profiles
+//    with this profile change looks like this: A changes profile.
+//                                              B sends message containing profilehashA to A -> A sees mismatch and answers with new profileA
+//
+//    rules with this approach are:
+//    -> attach recipient profilehash to every message
+//    -> answer with profile on mismatch
+//    (-> initiate profile sync by just sending recipient profilehash)
+//
+//    issues with this approach are:
+//    -> profile lags behind one message
+//    -> this approach pulls profile changes instead of pushing them
+//
+//    additional rules to address issues:
+//    -> when switching to peer via press send profilehash of this peer
+//    -> when changing profile switch back to own profile/latestfoto
+//
+// - (without mqtt features) rules: -> send ownprofilehash with every message.
+//                                  -> send ownprofile when adding a peer.
+//                                  -> send ownprofile when changing ownprofile.
+//
+//
+// ------------------ routines to sync profiles between two peers ----------------------------
+//
+//
+//   sender has to know receiver profile when sending a message to show accurate profile on switch -> requires profile pull before switching to peer -> pull profile of currpeer+1 when switching to currpeer
+//   receiver has to know sender profile when receiving a message  -> requires profile push befor sending a message
+//
+//   sync profiles with initiatorA and receiverB when A switches to currpeerB-1
+//   alias sync profiles when A switches peers with B beeing currpeer+1
+//
+//   traffic -> every switch at min sends one message
+//
+//   issues -> isnt even catchall since peers might change profiles while other peer does not switch
+//
+//  less complex routine requires max 3 messages to fully sync profiles between two peers
+//  most of the time 2 messages are sufficient
+//  sync profiles between initiatorA and receiverB: 1.A sends profilehashB
+//                                                   |
+//                                                   |--> 2.B does not respond is offline or hash matches
+//                                                   |    |--> sync done A continues with assumption everything is fine
+//                                                   |
+//                                                   |--> 2.B responds with profileB and profilehashA
+//                                                        |--> 3.A updates to profileA and sees match with profilehashA and sync is done
+//                                                        |
+//                                                        |--> 3.A updates to profileA and sees mismatch with profilehashA and responds with profileA
+//                                                             |--> B updates to profileA and sees match and sync is done
+//
+//  more complex routine requires max 3 messages to fully sync profiles between two peers
+//  most of the time 1 message is sufficient
+//  sync profiles between initiatorA and receiverB: 1.A sends profilehashA and profilehashB
+//                                                   |
+//                                                   |--> 2.B does not respond is offline or both hashes match
+//                                                   |    |--> sync done A continues with assumption everything is fine
+//                                                   |
+//                                                   |--> 2.B responds with profileB and profilehashA
+//                                                        |--> 3.A updates to profileA and sees match with profilehashA and sync is done
+//                                                        |
+//                                                        |--> 3.A updates to profileA and sees mismatch with profilehashA and responds with profileA
+//                                                             |--> B updates to profileA and sees match and sync is done
+//                                                                                                                                                  <--
+// --------------------------------------------------------------------------------------------                                                       |
+//                                                                                                                                                    |
+//                                                                                                                                                    |
+// ----------------------- very compliant to unreliable networks profile sync routines -------------------------                                      |
+//                                                                                                                                                    |
+// currently sender always sends own profile with every message this:                                                                                 |
+// - is most of the times unnecessary                                                                                                                 |
+// - guarantees profile is up to date when receiver gets a message                                                                                    |
+//                                                                                                                                                    |
+// send own profile hash with every message this:                                                                                                     |
+// - reduces traffic                                                                                                                                  |
+// - can guarantee profile is up to date when receiver displayes a message                                                                            |
+//                                                                                                                                                    |
+// send reciever profile hash and own profile hash with every message this:         <--  CURRENT FAVORED APPROACH -- TODO IMPLEMENT perhaps combine with
+// - still reduces traffic
+// - still can guarantee profile is up to date when receiver displayes a message
+// - allows sender to in a indirect way pull a profile of receiver
+//
+// ---------------------------------------------------------------------------------------
+//
+//
+// ------------------------ simple rules and consequences ----------------------------
+//
+// answer to a profilehash with ownprofilehash this:
+// - allows sender to push profile changes to online peers
+// - lets sender pull profiles of online peers
+//
+//------------------------------------------------------------------------------------
+//
+//
+// ------------------------ with minimal mqtt features ----------------------------
+//
+// put most recent profile encrypted with each secret into random topics with retain flag:
+// - allows peers on connection via wildcard sub to get all profiles at once wich then get decoded and on successfull decode stored
+// - decouples profile sync from message sending
+// - exposes networksize
+// - potentially exposes which peer knows how many peers
+// - piles up quickly so on connect a lot of messages have to be processed effectively dos our self
+// - how long does broker even retain these messages
+//
+// ---------------------------------------------------------------------------------
 
 
 //  ---------- key insights while testing ----------
