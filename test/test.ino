@@ -185,6 +185,55 @@
 // - how long does broker even retain these messages
 //
 // ---------------------------------------------------------------------------------
+//
+//
+//
+// ------------- how about -------------
+//
+// with every message add "this is my profilehash" plus "is this still yours?"
+// no answer "yes to both" (or "im offline")
+// answer "no this is my profile" plus "this is my profilehash" plus "is this still yours?"
+// no answer "ok i changed it"
+// answer "no this is my profile" plus "this is my profilehash" plus "is this still yours?"
+// no answer always "ok changed it"
+// -> most of the time just both hashes are the overhead
+// -> allows for little "am i in sync" polling with every message
+// -> add this to every message and for each peer with currpeer and currpeer+1
+// -? lots of uneccessary sncy traffic
+// -? still not up to date
+//
+//
+// ------------- how about -------------
+//
+// push own profile on change to all peers encrypted with their secret once
+// collect accs and push profile again for missing accs with each message
+//
+// ---------- alternative -------------
+// 
+// A switches to peerB -> send "myprofilehashA" and "yourprofilehashB?"
+// B answers with "myprofilehashB!" and "yourprofilehashA!" so everythings fine
+// B answers with "profilefotoB!" and "yourprofilehashA?" so A updates profile and potentially does the same
+// B answers with nothing so peer is offline so dont even give the option to send a foto
+// ~ lets A know if B is online
+// ~ usually causes two additional messages 1. ping 2. answer
+// + guarantees profile is in sync when switching to peer
+// + guarantees no foto is send to aether
+// ~ when A stays on peerB this does not trigger sync since this is not a switch perhaps always go back to local first but this is horrible ux perhaps fallback to normal behaviour and assume everything is fine
+// + should not even be noticable since happens in background
+//
+// ---------- IMPLEMENT THIS -------------
+//
+// A does first press with currpeer = peerB or does a switch to peerB -> send "myprofilehashA" and "yourprofilehashB?"
+// B answers with "myprofilehashB!" and "yourprofilehashA!" so everythings fine
+// B answers with "profilefotoB!" and "yourprofilehashA?" so A updates profile and potentially does the same
+// B answers with nothing so peer is offline so dont even give the option to send a foto
+// ~ lets A know if B is online
+// ~ usually causes two additional messages 1. ping 2. answer
+// + guarantees profile is in sync when sending to peer
+// + guarantees no foto is send to aether
+// ~ makes press very unresponsive since A has to wait for B to answer or timeout perhaps show loading/connecting foto while waiting or just accept unresponsiveness
+// + for peer switches this is not noticable since happens in background
+//
 
 
 //  ---------- key insights while testing ----------
