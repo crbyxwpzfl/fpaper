@@ -157,7 +157,7 @@
 // - reduces traffic                                                                                                                                  |
 // - can guarantee profile is up to date when receiver displayes a message                                                                            |
 //                                                                                                                                                    |
-// send reciever profile hash and own profile hash with every message this:         <--  CURRENT FAVORED APPROACH -- TODO IMPLEMENT perhaps combine with
+// send reciever profile hash and own profile hash with every message this:         <--  CURRENT FAVORED APPROACH -- TODO perhaps combine with        |
 // - still reduces traffic
 // - still can guarantee profile is up to date when receiver displayes a message
 // - allows sender to in a indirect way pull a profile of receiver
@@ -221,7 +221,7 @@
 // ~ when A stays on peerB this does not trigger sync since this is not a switch perhaps always go back to local first but this is horrible ux perhaps fallback to normal behaviour and assume everything is fine
 // + should not even be noticable since happens in background
 //
-// ---------- IMPLEMENT THIS -------------
+// ---------- SEEMS LIKE THE LEAST WORST -------------
 //
 // A does first press with currpeer = peerB or does a switch to peerB -> send "myprofilehashA" and "yourprofilehashB?"
 // B answers with "myprofilehashB!" and "yourprofilehashA!" so everythings fine
@@ -234,7 +234,85 @@
 // ~ makes press very unresponsive since A has to wait for B to answer or timeout perhaps show loading/connecting foto while waiting or just accept unresponsiveness
 // + for peer switches this is not noticable since happens in background
 //
-
+//
+//
+// ------------- another approach -------------
+//
+// sync once onconnect with all peers
+// set last will to "im offline" so peers dont send unnecessary fotos
+// push profiles on change to online peers
+//
+//
+//
+//
+// ------------- another approach -------------
+// 
+// on profile change
+//   -> push profile to online peers
+//   -> push new profilehash list in cleartext
+//   -> each online peer stores this list
+//
+// on connect
+//   -> publish own profilehash in cleartext
+//   -> get and compare list with local profile hashes
+//   -> request profiles of peers who are not found in list
+//
+// on disconnect alias last will
+//   -> publish profilehash list without own profilehash redact own profilehash
+//
+// on recieve cleartext profilehash 
+//   -> send currently saved cleartext profilehash list
+// 
+// on first recieve of profilehash list and waiting on list alias on connect after publish of own profilehash
+//   -> compare list with local profile hashes and request profiles of missing peers
+//
+//
+//
+//
+//
+// ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
+//
+// on connect
+//  -> ask all peers for their profiles perhaps by simply sending own profile encrypted to each peer
+//  -> remember who answered alias remember online peers
+//
+// on profile change
+//  -> push profile to online peers
+//
+// on disconnect alias last will
+//  -> send goodbye message to all online peers perhaps send own profilehash in cleartext since every peer online peer knows this without having to decrypt
+//
+// on recieve of known profilehash in cleartext
+//  -> set this peer to offline
+//
+// on peer add
+//  -> send own profile encrypted with new peers secret
+//
+// on recieve of encrypted profile and successfull decrypt and peer offline
+//  -> set this peer to online
+//  -> answer with own profile encrypted with this peers secret only answer to offline peers here other wise this is a endless loop ping pong of profiles
+//
+// issues
+//  - curretnly A onconnect 1. message (ping) -> B on receive 2. message (answer to ping) -> A on receive 3. message (miss interpretation as ping) -> B has a as online so done
+//    third message is redundant here since A already knows B is online by receiving the second message
+//    differentiate between inital ping and ping answer e.g. append "you there" to inital ping, "sure sure" to ping answer, "look here" to lates foto, "me pretty" to profile changes
+//    or more minimal just append "?" to inital ping and "!" to ping answer and profile changes, "" nothing to latest foto
+//    so only answer with profile+! when message was profile+?
+//    either way always include this appendix in message cypher and make all messages the same length to avoid leaking info whts beeing sent
+//  - perhaps makes public who knows how many peers
+//  - lots of messages on connect
+//  - tracks online status of peers
+//
+// pros
+//  - dont send unnecessary messages after initial sync
+//  - tracks online status of peers
+//
+// ------------------------------------------------------------------
+//
+//
+//
+//
+//
 
 //  ---------- key insights while testing ----------
 //
