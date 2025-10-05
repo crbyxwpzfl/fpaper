@@ -65,22 +65,31 @@
 //
 // add ciritcal screen for very bad errors that require user intervention like dos detected, replay detected and so on ....
 //
+// migrate to peer struct instead of standalone vectors
+// 
+// make the .ontopic callback more threadsafe
+// - theoretacally multible callbacks can run at the same time and esp. change index so either add this last success index to nvs class as a cached value or do not use it at all
+// - while a decrypt is in progress do not allow peer struct to be changed eg. deleting a peer, adding a peer
+// - perhaps also take the nvs mutex while decrypting to avoid changes to peers but this would only allow one decrypt process at a time but likely this already is the case
+// - perhaps make snapshot/copy of peers vector under lock and the use this to decrypting
+//
 //
 // ------------ obvious vulnerabilities ------------
 //
-// - replay/dos by publishing profilehashes wich then cause peers to register the true owner of this profilehash as offline
+// - 1. replay/dos by publishing profilehashes wich then cause peers to register the true owner of this profilehash as offline
 //   this is so cheap and is so impactful this has to be fixed
 //   - perhaps add on receive of ownprofilehash in cleartext do full disconnect/reconnect cycle to reassert online status but this than allowes for dos amplification
-//   - perhaps add on receive of ownprofilehash in cleartext show warning sceen and do nothing else and let user manually reconnect
+//   - perhaps add on receive of ownprofilehash in cleartext show warning screen and do nothing else and let user manually reconnect
+//   - perhaps allow manual granular reconnect via webserial command
 //
-// - dos by flooding topic with garbage
+// - 2. dos by flooding topic with garbage
 //   perhaps add a rate limit on processing messages and throw dos warning on screen
 //   drop messages of wrong size without processing
 //
-// - replay old messages are not detected and are just accepted
+// - 3. replay old messages are not detected and are just accepted
 //   add timestamp to messages and drop old messages
 //
-// - session hijack/takeover potentially suppresses last will message of true session owner or dublicates last will message when hijacker disconnects
+// - 4. session hijack/takeover potentially suppresses last will message of true session owner or dublicates last will message when hijacker disconnects
 //   causes other peers to send messages to a peer who is offline uneccessary traffic
 //   this is not easy to fix and relies on mqtt broker configuration
 //   best mitigation is to use a strong unique client id see above
@@ -89,24 +98,31 @@
 // ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
 //
 // on connect
-//  -> ask all peers for their profiles perhaps by simply sending own profile encrypted to each peer
+//  -> ask all peers for their profiles by simply sending own profile encrypted to each peer
 //  -> remember who answered alias remember online peers
 //
 // on profile change
+//  -> compute hash with sha2 256 https://github.com/espressif/arduino-esp32/blob/master/libraries/Hash/examples/SHA2/SHA2.ino
 //  -> push profile to online peers
+//  -> clean disconnect and reconnect with new profile hash as last will
+//  -> also do not sync again for this reconnect
 //
-// on disconnect alias last will
+// on ungracefull disconnect alias last will
 //  -> send goodbye message to all online peers perhaps send own profilehash in cleartext since every peer online peer knows this without having to decrypt
 //
-// on recieve of known profilehash in cleartext
-//  -> set this peer to offline
+// on recieve of known profilehash in cleartext determinated via length
+//  -> compare hash to stored profilehashes and mark this peer as offline if found
 //
 // on peer add
-//  -> send own profile encrypted with new peers secret
+//  -> send own profile encrypted with new peers secret same as on connect but just to one peer
 //
-// on recieve of encrypted profile and successfull decrypt and peer offline
+// on recieve successfull decrypt
 //  -> set this peer to online
-//  -> answer with own profile encrypted with this peers secret only answer to offline peers here other wise this is a endless loop ping pong of profiles
+//  -> for "you there" this is a ping, answer with own profile encrypted with this peers secret and add "sure sure", do hash check and potentially overwrite old profile
+//  -> for "sure sure" this is a ping response, do not answer sender does not expect an answer, do hash check and potentially overwrite old profile 
+//  -> for "me pretty" this is a profile change, do not answer, do hash check and potentially overwrite old profile and save hash
+//  -> for "look here" this is a latest foto and should be shown, do not answer, no hash check required
+//
 //
 // issues
 //  - curretnly A onconnect 1. message (ping) -> B on receive 2. message (answer to ping) -> A on receive 3. message (miss interpretation as ping) -> B has a as online so done
@@ -255,10 +271,23 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   static prefslock saveprefs() {    //  this returns a thread save proxy to prefs which unlocks when it goes out of scope
     return prefslock();
   }
+  
 
-  static inline std::vector<std::array<char, 8>> peers;    //  these have to be a continous array for nvs storage
-  static inline std::vector<std::array<uint8_t, 32>> hkdfs;    
-  static inline uint32_t slots;
+  /*  TODO migrate to this struct instead of multiple standalone vectors this seems cleaner remeber nvs byte values max are limited to 508,000 bytes see here https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/storage/nvs_flash.html
+  struct Peer {
+    std::array<char,8> name;            // nul-terminated max 7 chars
+    std::array<uint8_t,32> hkdf;        // secret
+    std::array<uint8_t,8> profile_hash; // short SHA prefix (or zeros if none)
+    bool offline;
+  };
+
+  static inline std::vector<Peer> peers;
+  */
+  static inline std::vector<std::array<char, 8>> peers;    //  put peer names into nvs and cache them for faster lookups also these have to be a continous arrays for nvs byte type storage
+  static inline std::vector<std::array<uint8_t, 32>> hkdfs;    //  put hkdfs for each peer into nvs and cache them for faster lookups
+  static inline std::vector<std::array<uint8_t, 8>> profilehashes;    //  not in nvs cache a sha256 of each peers profile to detect changes
+  static inline std::vector<std::array<bool, 1>> offline;    //  not in nvs cache status of each peer
+  static inline uint32_t slots;    //  this is the count of slots in nvs
   static inline uint16_t logsverbosity;    //  this is the verbosity level for logs to webserial
 
   static void init() {
@@ -938,7 +967,7 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
     }
 
     // these non static to allow mutlible parallel callbacks perhaps better to serialize callbacks with a semaphore/mutex to relive stack pressure
-    uint32_t index;    //  static initialises to zero also remember last successful peer index
+    static uint32_t index;    //  static initialises to zero also remember last successful peer index
     uint8_t rcvcyphy[15000];    //  TODO perhaps move these to psram or this is a bit large for stack so this is static perhaps better malloc and free int8_t* cyphy = (uint8_t*)malloc(15000);
     uint8_t temp[15000];     //  see comment abouveus
     //static uint32_t index;    //  static initialises to zero also remember last successful peer index
