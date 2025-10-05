@@ -46,7 +46,6 @@
 
 // ----------- TODO -----------
 //
-//
 //  currently app uses ~1,4MB of flash perhaps reduce this to less than 1MB
 //  currently 180KB internal Ram is remaining this is not too much
 //
@@ -59,215 +58,32 @@
 //
 // prpper boot screen would be nice eg. with  while (WiFi.status() != WL_CONNECTED) {delay(500); Serial.print("."); } and similar
 //
-// consider mqtt features like qos, retain messages and persistent session.
-// - for public brokers i cant guarantee a any retention period for retained or queued messages.
-//
 // set a strong unique client id for mqtt to ensure broker wider unique id ids are not topic scoped!
 // - mqttClient.setClientId(const char *clientId); // has to be <23bytes UTF-8 encoded string for MQTT 3.1.1 defaults to last 3 bytes of the MAC address in hex format
 // - esp32s3 has only 6 bytes MAC see https://github.com/espressif/esp-idf/blob/800f141f94c0f880c162de476512e183df671307/components/efuse/esp32s3/esp_efuse_table.c#L694
+// - what happens on session hijacking? is a last will message sent? will i just reconnect with same id and potentially fight indefinitely with hijacker?
 //
-// optimise profile foto sync
-// - currently the profile of the sender is sent with every message this is unnecessary since the profile mostly stays the same
-// - (with mqtt features) send profile once with retain flag and qos1 issue here is only one message is retained per topic so this at min requires one topic per profile and with curretn encryption even two topics per secret each conversation partner puts its profile encrypted for conversation partner into a topic
-// - (with mqtt features) send profile once with qos1 and use persistent session so the broker stores this for disconnected clients. issue here is what happens with newly joining clients? also makes session takeover (subscribing with same id) more impactful.
-// - (without mqtt features) send profile on change encrypted with every secret. issue peers might be offline during this change
-//                           send profile when adding a peer encrypted with this new peers secret. requires peer to be online during add process
-// - (without mqtt features) send profilehash with every message and make reciever request profile when hash does not match. issue here is programm complexity
-//                           when adding a peer send own profile encrypted with this new peers secret.
-// - (without mqtt features) set profile foto of all peers locally and dont bother with syncing profiles at all.
-
-// - (without mqtt features) send recipient profile hash when switching to this peer or adding this peer. alias tell peer "this is your profile correct?"
-//                           answer to profile hashes with profile or nothing if hash matches.  alias tell peer "no this is my current profile" 
-//                                                                                              or dont answer meaning "this is correct i got nothing to change"
-//                           here no answer can mean peer is offline or hash matches an explicit confirmation would allow for online monitoring of peers is this a feature or should this be avoided for privacy?
-//    whith this adding a peer looks like this: A adds secretAB and sends profilehashB to B -> B does not answer to message jet
-//                                              B adds secretAB and sends profilehashA to A -> A sees mismatch and answers with profileA and also sends profilehashB to B
-//                                              B saves profileA answers with profileB -> A saves profileB
-//                                              now both have each others profiles
-//    with this profile change looks like this: A changes profile.
-//                                              B sends message containing profilehashA to A -> A sees mismatch and answers with new profileA
-//
-//    rules with this approach are:
-//    -> attach recipient profilehash to every message
-//    -> answer with profile on mismatch
-//    (-> initiate profile sync by just sending recipient profilehash)
-//
-//    issues with this approach are:
-//    -> profile lags behind one message
-//    -> this approach pulls profile changes instead of pushing them
-//
-//    additional rules to address issues:
-//    -> when switching to peer via press send profilehash of this peer
-//    -> when changing profile switch back to own profile/latestfoto
-//
-// - (without mqtt features) rules: -> send ownprofilehash with every message.
-//                                  -> send ownprofile when adding a peer.
-//                                  -> send ownprofile when changing ownprofile.
+// add ciritcal screen for very bad errors that require user intervention like dos detected, replay detected and so on ....
 //
 //
-// ------------------ routines to sync profiles between two peers ----------------------------
+// ------------ obvious vulnerabilities ------------
 //
+// - replay/dos by publishing profilehashes wich then cause peers to register the true owner of this profilehash as offline
+//   this is so cheap and is so impactful this has to be fixed
+//   - perhaps add on receive of ownprofilehash in cleartext do full disconnect/reconnect cycle to reassert online status but this than allowes for dos amplification
+//   - perhaps add on receive of ownprofilehash in cleartext show warning sceen and do nothing else and let user manually reconnect
 //
-//   sender has to know receiver profile when sending a message to show accurate profile on switch -> requires profile pull before switching to peer -> pull profile of currpeer+1 when switching to currpeer
-//   receiver has to know sender profile when receiving a message  -> requires profile push befor sending a message
+// - dos by flooding topic with garbage
+//   perhaps add a rate limit on processing messages and throw dos warning on screen
+//   drop messages of wrong size without processing
 //
-//   sync profiles with initiatorA and receiverB when A switches to currpeerB-1
-//   alias sync profiles when A switches peers with B beeing currpeer+1
+// - replay old messages are not detected and are just accepted
+//   add timestamp to messages and drop old messages
 //
-//   traffic -> every switch at min sends one message
-//
-//   issues -> isnt even catchall since peers might change profiles while other peer does not switch
-//
-//  less complex routine requires max 3 messages to fully sync profiles between two peers
-//  most of the time 2 messages are sufficient
-//  sync profiles between initiatorA and receiverB: 1.A sends profilehashB
-//                                                   |
-//                                                   |--> 2.B does not respond is offline or hash matches
-//                                                   |    |--> sync done A continues with assumption everything is fine
-//                                                   |
-//                                                   |--> 2.B responds with profileB and profilehashA
-//                                                        |--> 3.A updates to profileA and sees match with profilehashA and sync is done
-//                                                        |
-//                                                        |--> 3.A updates to profileA and sees mismatch with profilehashA and responds with profileA
-//                                                             |--> B updates to profileA and sees match and sync is done
-//
-//  more complex routine requires max 3 messages to fully sync profiles between two peers
-//  most of the time 1 message is sufficient
-//  sync profiles between initiatorA and receiverB: 1.A sends profilehashA and profilehashB
-//                                                   |
-//                                                   |--> 2.B does not respond is offline or both hashes match
-//                                                   |    |--> sync done A continues with assumption everything is fine
-//                                                   |
-//                                                   |--> 2.B responds with profileB and profilehashA
-//                                                        |--> 3.A updates to profileA and sees match with profilehashA and sync is done
-//                                                        |
-//                                                        |--> 3.A updates to profileA and sees mismatch with profilehashA and responds with profileA
-//                                                             |--> B updates to profileA and sees match and sync is done
-//                                                                                                                                                  <--
-// --------------------------------------------------------------------------------------------                                                       |
-//                                                                                                                                                    |
-//                                                                                                                                                    |
-// ----------------------- very compliant to unreliable networks profile sync routines -------------------------                                      |
-//                                                                                                                                                    |
-// currently sender always sends own profile with every message this:                                                                                 |
-// - is most of the times unnecessary                                                                                                                 |
-// - guarantees profile is up to date when receiver gets a message                                                                                    |
-//                                                                                                                                                    |
-// send own profile hash with every message this:                                                                                                     |
-// - reduces traffic                                                                                                                                  |
-// - can guarantee profile is up to date when receiver displayes a message                                                                            |
-//                                                                                                                                                    |
-// send reciever profile hash and own profile hash with every message this:         <--  CURRENT FAVORED APPROACH -- TODO perhaps combine with        |
-// - still reduces traffic
-// - still can guarantee profile is up to date when receiver displayes a message
-// - allows sender to in a indirect way pull a profile of receiver
-//
-// ---------------------------------------------------------------------------------------
-//
-//
-// ------------------------ simple rules and consequences ----------------------------
-//
-// answer to a profilehash with ownprofilehash this:
-// - allows sender to push profile changes to online peers
-// - lets sender pull profiles of online peers
-//
-//------------------------------------------------------------------------------------
-//
-//
-// ------------------------ with minimal mqtt features ----------------------------
-//
-// put most recent profile encrypted with each secret into random topics with retain flag:
-// - allows peers on connection via wildcard sub to get all profiles at once wich then get decoded and on successfull decode stored
-// - decouples profile sync from message sending
-// - exposes networksize
-// - potentially exposes which peer knows how many peers
-// - piles up quickly so on connect a lot of messages have to be processed effectively dos our self
-// - how long does broker even retain these messages
-//
-// ---------------------------------------------------------------------------------
-//
-//
-//
-// ------------- how about -------------
-//
-// with every message add "this is my profilehash" plus "is this still yours?"
-// no answer "yes to both" (or "im offline")
-// answer "no this is my profile" plus "this is my profilehash" plus "is this still yours?"
-// no answer "ok i changed it"
-// answer "no this is my profile" plus "this is my profilehash" plus "is this still yours?"
-// no answer always "ok changed it"
-// -> most of the time just both hashes are the overhead
-// -> allows for little "am i in sync" polling with every message
-// -> add this to every message and for each peer with currpeer and currpeer+1
-// -? lots of uneccessary sncy traffic
-// -? still not up to date
-//
-//
-// ------------- how about -------------
-//
-// push own profile on change to all peers encrypted with their secret once
-// collect accs and push profile again for missing accs with each message
-//
-// ---------- alternative -------------
-// 
-// A switches to peerB -> send "myprofilehashA" and "yourprofilehashB?"
-// B answers with "myprofilehashB!" and "yourprofilehashA!" so everythings fine
-// B answers with "profilefotoB!" and "yourprofilehashA?" so A updates profile and potentially does the same
-// B answers with nothing so peer is offline so dont even give the option to send a foto
-// ~ lets A know if B is online
-// ~ usually causes two additional messages 1. ping 2. answer
-// + guarantees profile is in sync when switching to peer
-// + guarantees no foto is send to aether
-// ~ when A stays on peerB this does not trigger sync since this is not a switch perhaps always go back to local first but this is horrible ux perhaps fallback to normal behaviour and assume everything is fine
-// + should not even be noticable since happens in background
-//
-// ---------- SEEMS LIKE THE LEAST WORST -------------
-//
-// A does first press with currpeer = peerB or does a switch to peerB -> send "myprofilehashA" and "yourprofilehashB?"
-// B answers with "myprofilehashB!" and "yourprofilehashA!" so everythings fine
-// B answers with "profilefotoB!" and "yourprofilehashA?" so A updates profile and potentially does the same
-// B answers with nothing so peer is offline so dont even give the option to send a foto
-// ~ lets A know if B is online
-// ~ usually causes two additional messages 1. ping 2. answer
-// + guarantees profile is in sync when sending to peer
-// + guarantees no foto is send to aether
-// ~ makes press very unresponsive since A has to wait for B to answer or timeout perhaps show loading/connecting foto while waiting or just accept unresponsiveness
-// + for peer switches this is not noticable since happens in background
-//
-//
-//
-// ------------- another approach -------------
-//
-// sync once onconnect with all peers
-// set last will to "im offline" so peers dont send unnecessary fotos
-// push profiles on change to online peers
-//
-//
-//
-//
-// ------------- another approach -------------
-// 
-// on profile change
-//   -> push profile to online peers
-//   -> push new profilehash list in cleartext
-//   -> each online peer stores this list
-//
-// on connect
-//   -> publish own profilehash in cleartext
-//   -> get and compare list with local profile hashes
-//   -> request profiles of peers who are not found in list
-//
-// on disconnect alias last will
-//   -> publish profilehash list without own profilehash redact own profilehash
-//
-// on recieve cleartext profilehash 
-//   -> send currently saved cleartext profilehash list
-// 
-// on first recieve of profilehash list and waiting on list alias on connect after publish of own profilehash
-//   -> compare list with local profile hashes and request profiles of missing peers
-//
-//
-//
+// - session hijack/takeover potentially suppresses last will message of true session owner or dublicates last will message when hijacker disconnects
+//   causes other peers to send messages to a peer who is offline uneccessary traffic
+//   this is not easy to fix and relies on mqtt broker configuration
+//   best mitigation is to use a strong unique client id see above
 //
 //
 // ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
@@ -324,11 +140,13 @@
 // - if( xQueueReceive( comms::mqsendq, &send, portMAX_DELAY ) == pdPASS ) { ... } does not block the cpu but just moves the task to waiting state until sth is in the queue
 //   this is exactly what is wanted
 //
-// - xTaskCreate does even with arduino does not place all tasks on core1 so use xTaskCreatePinnedToCore to ensure this
+// - xTaskCreate does, even with arduino, not place all tasks on core1 so use xTaskCreatePinnedToCore to ensure this
 //   otherwiese make sure that all recources are thread safe e.g. nvs access use semaphores or mutexes
 //   this RAII nvs::prefslock is very cool and so nice to use
 //
 // - MDNS is broken somehow!!
+//
+//
 
 
 class comms {    //  this is for all the inter task communication via queues    essentially these are globals not sure this namespace thing is good practice
