@@ -4,6 +4,8 @@
 #### https://www.autodesk.com/community/gallery/project/132949/sg90-9g-micro-servo - nice servo modell of ccirone2
 #### rest - is ai and me
 
+todo - advanced perhpas stupid - store pointers to responsive peers in a vector of pointers to peer structs. on start up load complete peers blob into second allpeers vector with actual contigous structs holding the data. then on first connection put pointers to responsive peers into this first vector. then once one peer goes offline or comes back just update the pointer vector. for recieving a message this reduces the amount of hkdfs to try and no check for offline bool would be neccessary. but this uses uint32 pointer instead of just bool perhps this overhead is ok perhapsthis is even better than haveing the bool in a struct since alingmnet and wasted bufferbytes. 
+
 todo - test thread safety thoroughly esp. revise onTopic callback
 
 todo - curretnly 200KB ram is free this is not too much consider moving stuff to PSRAM
