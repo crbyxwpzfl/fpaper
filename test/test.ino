@@ -226,6 +226,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   static inline SemaphoreHandle_t nvsmtx;
   static inline Preferences prefs;
 
+  /*
   static void cachepeers() {    //  this rechaches from nvs or inits cache with default value
     size_t pb = prefs.getBytesLength("peers");
     if (pb) {    //  either load peers into cache
@@ -237,7 +238,25 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       appendpeer("local");
     }
   }
+  */
 
+  static void cachepeers() {
+    size_t pb = saveprefs()->getBytesLength("peers");
+    if (pb) {
+      peers.resize(pb / sizeof(peer));    //  resize vector to hold all peers
+      saveprefs()->getBytes("peers", peers.data(), pb);    //  load all peers from nvs
+    }
+    else {    //  or initialize peers with default value at index 0
+      peer localpeer{};
+      localpeer.name = "local";
+      localpeer.hkdf.fill(0);    //  empty secret
+      localpeer.profilehash.fill(0);    //  empty profile hash
+      localpeer.offline = false;    //  online by default
+      appendpeer(localpeer);
+    }
+  }
+
+  /*
   static void cachehkdfs() {
     //size_t hb = prefs.getBytesLength("hkdfs");
     size_t hb = saveprefs()->getBytesLength("hkdfs");
@@ -250,6 +269,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       appendhkdf("");    //  empty secret is this safe this feels like an undefinded read
     }
   }
+  */
 
   static void cacheslots() {
     //slots = prefs.getUInt("slots", 0);
@@ -272,21 +292,22 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     return prefslock();
   }
   
-
-  /*  TODO migrate to this struct instead of multiple standalone vectors this seems cleaner remeber nvs byte values max are limited to 508,000 bytes see here https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/storage/nvs_flash.html
-  struct Peer {
-    std::array<char,8> name;            // nul-terminated max 7 chars
-    std::array<uint8_t,32> hkdf;        // secret
-    std::array<uint8_t,8> profile_hash; // short SHA prefix (or zeros if none)
-    bool offline;
-  };
-
-  static inline std::vector<Peer> peers;
-  */
+  /*
   static inline std::vector<std::array<char, 8>> peers;    //  put peer names into nvs and cache them for faster lookups also these have to be a continous arrays for nvs byte type storage
   static inline std::vector<std::array<uint8_t, 32>> hkdfs;    //  put hkdfs for each peer into nvs and cache them for faster lookups
   static inline std::vector<std::array<uint8_t, 8>> profilehashes;    //  not in nvs cache a sha256 of each peers profile to detect changes
   static inline std::vector<std::array<bool, 1>> offline;    //  not in nvs cache status of each peer
+  */
+
+  struct peer {    //  remember nvs byte blobs max length is 508kb see here https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/storage/nvs_flash.html
+    std::array<char,8> name;    //  nul-terminated so 7chars 
+    std::array<uint8_t,32> hkdf;    //  secret this is for en-/decryption of mqtt messages
+    std::array<uint8_t,8> profilehash;    //  short sha to quickly check for profile changes
+    uint8_t offline;    //  track status of peers dont send unnecessary messages to unresponsive peers
+  };
+
+  static inline std::vector<peer> peers;    //  cache this for faster lookups this has to be a continous array for nvs byte type storage
+
   static inline uint32_t slots;    //  this is the count of slots in nvs
   static inline uint16_t logsverbosity;    //  this is the verbosity level for logs to webserial
 
@@ -294,11 +315,12 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     nvsmtx = xSemaphoreCreateMutex();
     prefs.begin("prefs", false);    //  open preferences with namespace prefs in read write mode
     cachepeers();
-    cachehkdfs();
+    //cachehkdfs();
     cacheslots();
     cachelogsverbosity();
   }
 
+  /*
   static char* appendpeer(const char* peername = nullptr) {    //  this appends and writes this vector to nvs
     std::array<char, 8> peer{};    //  zero initialise a fixed byte array for peer name ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
 
@@ -347,7 +369,26 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     //return prefs.putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32) == hkdfs.size() * 32;    //  write back peer list without deleted peer to nvs
     return saveprefs()->putBytes("hkdfs", hkdfs.data(), hkdfs.size() * 32) == hkdfs.size() * 32;    //  write back peer list without deleted peer to nvs
   }
+  */
 
+  static std::vector<peer>::iterator findpeer_it(const std::string_view& name) {    //  helper to find a peer this returns an iterator to insert / erase with so the vector stays sorted
+    auto lock = saveprefs();     //  to hold the nvs mutex while lookup
+    return std::lower_bound(peers.begin(), peers.end(), name, [](const peer& p, const std::string_view& name) {
+      return std::string_view(p.name.data()) < name;
+    });
+  }
+
+  static bool insertpeer(const char* peername = nullptr, const uint8_t* hkdf = nullptr) {    //  this appends and writes this vector to nvs
+    peer latestpeer{};    //  zero initialise peer struct ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+
+    if 
+    strncpy(latestpeer.name.data(), peername ? peername : "", 7);   // copy directly from args and leave last byte for NUL
+    
+  }
+
+  static bool erasepeer() {    //  this rmvs a peer this is slow but does not happen oftern better swap with last and pop back
+
+  }
 
   static uint32_t deleteslot(uint32_t delslot) {    //  this deletes a slot and writes this count into nvs
     if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
@@ -500,23 +541,43 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   static WebSerial ws;    //  make webserial static so it can be attached to logs class
 
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile time initialization to reduce heap pressure/fragmentation
-    {"delslot", [&](std::string args) {    //  all these conversions feel wrong
-      if (args.empty()) { ws.print("eeee delslot requires args\n"); return; }
-
-      uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots a one indexed
-
-      if (!delslot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
-
-      if (nvs::deleteslot(delslot)) ws.printf("deleted slot '%u'\n", delslot);
-      else  ws.printf("eeee slot '%u' out of range\n", delslot);
-      
-      return;
-    }},
-
-    {"peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
+    {"add peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
       if (args.empty()) { ws.print("eeee peer requires args\n"); return; }
       if (strtoul(args.c_str(), NULL, 10)) { ws.print("eeee numbers not allowed\n"); return; }    //  prevent peer names which are numbers since these are reserved for slots
 
+      std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
+
+      if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  when peername too long return early
+
+      if (args.length() == name.length()) { ws.print("eeee this requires a secret\n"); return; }    //  when no secret provided return early
+
+      auto it = std::lower_bound(peers.begin(), peers.end(), name,
+          [](const peer& p, const std::string_view& name) {
+              return std::string_view(p.name.data()) < name;
+          });
+
+      if (it != peers.end() && std::string_view(it->name.data()) == name) { ws.print("eeee peer already exists\n"); return; }    //  when peer exists return early
+
+      peer latestpeer{};    //  zero initialise peer struct ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
+      strncpy(latestpeer.name.data(), name.c_str(), 7);   // copy directly from args and leave last byte for NUL
+      latestpeer.hkdf.fill(0);
+      latestpeer.profilehash.fill(0);
+      latestpeer.offline = 1;    //  offline by default
+
+      hkdf<SHA256>(latestpeer.hkdf.data(), 32, (args + name.length() + 1), args.length() - (name.length() + 1), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
+
+      peers.insert(it, latestpeer);
+
+
+      /*  insert new peer in sorted order
+      auto pos = std::lower_bound(peers.begin(), peers.end(), newPeer,
+        [](const peer& a, const peer& b) {
+            return std::string_view(a.name.data()) < std::string_view(b.name.data());
+        });
+      peers.insert(pos, newPeer);
+      */
+
+      /*
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
 
       if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  when peername too long return early
@@ -540,9 +601,10 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
         nvs::appendpeer(name.c_str());    //  add peer
         nvs::appendhkdf(args.c_str() + name.length() + 1);    //  add secret
       }
+      */
     }},
 
-    {"wstime", [&](std::string args){    //  this sets time after wich webserial closes automatically    this is for this one friend who is on public wifi
+    {"ws time", [&](std::string args){    //  this sets time after wich webserial closes automatically    this is for this one friend who is on public wifi
       if (args.empty()) { ws.print("eeee wstime requires args\n"); return; }
       uint32_t wstime = strtoul(args.c_str(), NULL, 10);
       if (!wstime) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
@@ -552,21 +614,26 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       ws.printf("closes after '%u' seconds\n", wstime);
     }},
 
-    {"publ", [&](std::string args){    //  this manually publishes sth via the mqsendq
-      if (args.empty()) { ws.print("eeee publ requires args\n"); return; }
-      // TODO validate args and pass to mqsendq
-    }},
 
-
-    {"firmware", [&](std::string args){    // TODO either try link or set to auto for hardcoded link/default link
+    {"fw url", [&](std::string args){    // TODO either try link or set to auto for hardcoded link/default link
       if (args.empty()) { ws.print("eeee apt upgrade requires a link\n"); return; }
       //nvs::prefs.putBytes("airlink", args.c_str(), args.length());
       nvs::saveprefs()->putBytes("airlink", args.c_str(), args.length());
       ws.printf("set firmware url to '%s'\n", args.c_str());
     }},
 
+    {"fw auto", [&](std::string args){    // TODO pass hardcoded link here to nvs
+      nvs::saveprefs()->putBytes("airlink", args.c_str(), args.length());
+      ws.printf("set firmware url to '%s'\n", args.c_str());
+    }},
 
-    {"rm", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
+    {"fw off", [&](std::string args){    // TODO this deactivates auto update
+      nvs::saveprefs()->remove("airlink");
+      ws.printf("set firmware url to '%s'\n", args.c_str());
+    }},
+
+
+    {"rm -rf", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
       if (args != "-rf") { ws.print("eeee rm requires args '-rf'\n"); return; }
       //nvs::prefs.clear();
       nvs::saveprefs()->clear();
@@ -574,7 +641,26 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     }},
 
 
-    {"top", [&](std::string args){    // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
+    {"rm slot", [&](std::string args) {    //  all these conversions feel wrong
+      if (args.empty()) { ws.print("eeee slot requires args\n"); return; }
+
+      uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots a one indexed
+
+      if (!delslot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
+
+      if (nvs::deleteslot(delslot)) ws.printf("deleted slot '%u'\n", delslot);
+      else  ws.printf("eeee slot '%u' out of range\n", delslot);
+      
+      return;
+    }},
+
+
+    {"rm -peer", [&](std::string args) {    //  all these conversions feel wrong
+      // todo implement this make sure map lookup supports spaces!!!!
+    }},
+
+
+    {"pos top", [&](std::string args){    // todo add 'top' , 'sit' to set servo positions prefs.putInt("top",
       if (args.empty()) { ws.print("eeee top requires args\n"); return; }
       uint32_t pos = strtoul(args.c_str(), NULL, 10);
       if (!pos) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
@@ -583,7 +669,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       ws.printf("top set to '%u'\n", pos);
     }},
 
-    {"sit", [&](std::string args){
+    {"pos sit", [&](std::string args){
       if (args.empty()) { ws.print("eeee sit requires args\n"); return; }
       uint32_t pos = strtoul(args.c_str(), NULL, 10);
       if (!pos) { ws.printf("eeee '%s' not a number \n", args.c_str()); return; }
@@ -592,7 +678,56 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       ws.printf("sit set to '%u'\n", pos);
     }},
 
-    {"info", [&](std::string args) {
+
+    {"wifi ssid", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee ssid requires a value\n"); return; }
+      //nvs::prefs.putString("ssid", args.c_str());
+      nvs::saveprefs()->putString("ssid", args.c_str());
+      ws.printf("ssid set to '%s'\n", args.c_str());
+    }},
+    
+    {"wifi pass", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee pass requires a value\n"); return; }
+      //nvs::prefs.putString("pass", args.c_str());
+      nvs::saveprefs()->putString("pass", args.c_str());
+      ws.printf("Password set to '%s'\n", args.c_str());
+    }},
+
+
+    {"mqtt publ", [&](std::string args){    //  this manually publishes sth via the mqsendq
+      if (args.empty()) { ws.print("eeee publ requires args\n"); return; }
+      // TODO validate args and pass to mqsendq
+    }},
+
+    {"mqtt topic", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee topic requires a value\n"); return; }
+      //nvs::prefs.putString("mqtop", args.c_str());
+      nvs::saveprefs()->putString("mqtop", args.c_str());
+      ws.printf("MQTT topic set to '%s'\n", args.c_str());
+    }},
+
+    {"mqtt serv", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee serv requires a URL\n"); return; }
+      //nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  store firmware link as well
+      nvs::saveprefs()->putBytes("mqserv", args.c_str(), args.length());
+      ws.printf("MQTT server set to '%s'\n", args.c_str());
+    }},
+
+
+    {"logs level", [&](std::string args) {
+      if (args.empty()) { ws.print("eeeee logs requires a level\n"); return; }
+      nvs::putlogsverbosity(args == "critical" ? logs::critical : args == "warn" ? logs::warn : args == "info" ? logs::info : args == "debug" ? logs::debug : 0 );    //  default to error on invalid input  this is not pretty but simple
+      ws.printf("logs level is '%u'\n", nvs::logsverbosity);
+    }},
+
+
+    {"sudo reboot", [&](std::string args) {
+      ws.print("restarting ....\n");
+      ESP.restart();
+    }},
+
+
+    {"show info", [&](std::string args) {
       // this only works after all tasks are created obviously so wstask has to be created last
       // get task handles for the info task wich tries to get the watermarks of other tasks
       // instead of keeping global task handles these could be retrieved once here. make sure the taskhndles are not used elsewhere to
@@ -633,47 +768,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       //    }
     }},
 
-
-    {"topic", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee topic requires a value\n"); return; }
-      //nvs::prefs.putString("mqtop", args.c_str());
-      nvs::saveprefs()->putString("mqtop", args.c_str());
-      ws.printf("MQTT topic set to '%s'\n", args.c_str());
-    }},
-
-    {"logs", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee logs requires a level\n"); return; }
-      nvs::putlogsverbosity(args == "critical" ? logs::critical : args == "warn" ? logs::warn : args == "info" ? logs::info : args == "debug" ? logs::debug : 0 );    //  default to error on invalid input  this is not pretty but simple
-      ws.printf("logs level is '%u'\n", nvs::logsverbosity);
-    }},
-    
-    {"ssid", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee ssid requires a value\n"); return; }
-      //nvs::prefs.putString("ssid", args.c_str());
-      nvs::saveprefs()->putString("ssid", args.c_str());
-      ws.printf("ssid set to '%s'\n", args.c_str());
-    }},
-    
-    {"pass", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee pass requires a value\n"); return; }
-      //nvs::prefs.putString("pass", args.c_str());
-      nvs::saveprefs()->putString("pass", args.c_str());
-      ws.printf("Password set to '%s'\n", args.c_str());
-    }},
-    
-    {"serv", [&](std::string args) {
-      if (args.empty()) { ws.print("eeeee serv requires a URL\n"); return; }
-      //nvs::prefs.putBytes("airlink", args.c_str(), args.length());    //  store firmware link as well
-      nvs::saveprefs()->putBytes("mqserv", args.c_str(), args.length());
-      ws.printf("MQTT server set to '%s'\n", args.c_str());
-    }},
-    
-    {"restart", [&](std::string args) {
-      ws.print("restarting ....\n");
-      ESP.restart();
-    }},
-    
-    {"help", [&](std::string args) {
+    {"show help", [&](std::string args) {
       // TODO -------- add this Serial.println(__cplusplus); // Shows C++ standard version
       //  no filepath - small snippet
       //  Serial.printf("free heap: %u\n", ESP.getFreeHeap());
@@ -715,13 +810,13 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
     logs::feed(logs::debug, "recieved '%s' and", stdstr.c_str());
 
-    auto pos = stdstr.find(' ');
-    auto it = cmds.find(stdstr.substr(0, pos));
+    auto pos = stdstr.find(' ', 7);    //  find first space after an offset to allow for commands with spaces this returns string::npos when no space found
+    auto it = cmds.find(stdstr.substr(0, pos));    //  lookup command in map either full string for string::npos or up to first space after offset
     if (it != cmds.end()) {
 
       logs::feed(logs::debug, " found \n\r");
 
-      it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments
+      it->second( (pos == std::string::npos) ? "" : stdstr.substr(pos + 1) );    //  call the function in the unordered map with arguments or empty string when no args
     } else {
       logs::feed(logs::critical, " not found try 'help' \n\r");
     }
@@ -958,6 +1053,9 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
   //mqttClient.onTopic( nvs::prefs.getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
   mqttClient.onTopic( nvs::saveprefs()->getString("mqtop", "fpaper/").c_str() , 0, [&](const char *topic, const char *payload, int retain, int qos, bool dup) {    //  TODO get dont use .c_str() here properly use a buffer and have getStrig read const char* into buffer      wildcards should work here listen one level deep for now TODO change this to only subscribe to peers
+    
+    assert( *uint32_t(payload) != 0xfafafafa );  //  when payload this then stop
+
     logs::feed(logs::debug, "mqtt message preview '%.21s' at '%s' \n\r", payload, topic);    //  for binary this prints garbage and stops with first null terminator this is acceptable
 
     if ( !memcmp(sendcyphy, payload, 12) ) {    //  ignore echos no sens to decode echos  echos free the send task early  this seems racey but while publish there is no echo befor publish   TODO implement some check to avoid mitigate spam here eg some chek for known phrase or sth
@@ -1016,6 +1114,8 @@ void sendmqttTas(void *parameter) {    //  this handles all mqtt traffic
 
         comms::toshowq(nvs::peers[index].data(), 0, "%s", nvs::peers[index].data());    //  show recieved foto with full refresh and ocupie screen with 'user' so no other message interferes
       }
+
+      memset( (uint8_t*)payload, 0xfa, 4);    //  this casts away const for payload < 8 bytes this is dangarus
 
       chachapoly.clear();  return;    //  exit lambda
     }
