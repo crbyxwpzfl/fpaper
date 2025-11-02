@@ -303,7 +303,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     std::array<char,8> name;    //  nul-terminated so 7chars 
     std::array<uint8_t,32> hkdf;    //  secret this is for en-/decryption of mqtt messages
     std::array<uint8_t,8> profilehash;    //  short sha to quickly check for profile changes
-    uint8_t offline;    //  track status of peers dont send unnecessary messages to unresponsive peers
+    uint8_t alive;    //  track status of peers dont send unnecessary messages to unresponsive peers
   };
 
   static inline std::vector<peer> peers;    //  cache this for faster lookups this has to be a continous array for nvs byte type storage
@@ -371,6 +371,9 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   }
   */
 
+
+  /* i think this is not really what i wan i think i just want is find in
+
   static std::vector<peer>::iterator findpeer_it(const std::string_view& name) {    //  helper to find a peer this returns an iterator to insert / erase with so the vector stays sorted
     auto lock = saveprefs();     //  to hold the nvs mutex while lookup
     return std::lower_bound(peers.begin(), peers.end(), name, [](const peer& p, const std::string_view& name) {
@@ -388,6 +391,15 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
 
   static bool erasepeer() {    //  this rmvs a peer this is slow but does not happen oftern better swap with last and pop back
 
+  }
+  */
+
+
+  static uint32_t findpeer(const char* peername) {
+    auto it = std::find_if(peers.begin(), peers.end(), [&](const peer& p){    //  reminder index zero reserved for local so perhaps do '.... find(peers.begin() + 1, ....' instead
+      return strncmp(p.name.data(), peername, sizeof(p.name) - 1) == 0;
+    });
+    return it == peers.end() ? 0 : static_cast<uint32_t>(std::distance(peers.begin(), it));    //  cast avoids warnings
   }
 
   static uint32_t deleteslot(uint32_t delslot) {    //  this deletes a slot and writes this count into nvs
@@ -546,27 +558,22 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       if (strtoul(args.c_str(), NULL, 10)) { ws.print("eeee numbers not allowed\n"); return; }    //  prevent peer names which are numbers since these are reserved for slots
 
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
+      std::string secret = args.substr(name.length() + 1);    //  this is the secret either pos 8..nospc or empty
 
       if (name.length() > 8) { ws.print("eeee peer name too long\n"); return; }    //  when peername too long return early
+      if (secret.empty()) { ws.print("eeee this requires a secret\n"); return; }    //  when no secret provided return early
+      if (findpeer(name.c_str())) { ws.print("eeee peer already exists\n"); return; }    //  when peer exists return early
 
-      if (args.length() == name.length()) { ws.print("eeee this requires a secret\n"); return; }    //  when no secret provided return early
+      peer latestpeer{};    //  zero initialise peer struct ensures null termination for name plus marks peer not alive also structs are contigous this is required for nvs byteblob
 
-      auto it = std::lower_bound(peers.begin(), peers.end(), name,
-          [](const peer& p, const std::string_view& name) {
-              return std::string_view(p.name.data()) < name;
-          });
+      strncpy(latestpeer.name.data(), name.c_str(), sizeof(latestpeer.name) - 1);    //  enshure null terminator stayes
 
-      if (it != peers.end() && std::string_view(it->name.data()) == name) { ws.print("eeee peer already exists\n"); return; }    //  when peer exists return early
+      hkdf<SHA256>(latestpeer.hkdf.data(), 32, reinterpret_cast<const uint8_t*>(secret.c_str()), secret.length(), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes form secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
 
-      peer latestpeer{};    //  zero initialise peer struct ensures null termination and allowes continous storage in vector unlike std::string would this is necessary for nvs
-      strncpy(latestpeer.name.data(), name.c_str(), 7);   // copy directly from args and leave last byte for NUL
-      latestpeer.hkdf.fill(0);
-      latestpeer.profilehash.fill(0);
-      latestpeer.offline = 1;    //  offline by default
+      nvs::peers.push_back(latestpeer);
 
-      hkdf<SHA256>(latestpeer.hkdf.data(), 32, (args + name.length() + 1), args.length() - (name.length() + 1), nullptr, 0, "nvsalias", strlen("nvsalias"));    //  derive 32 bytes as secret for encryption hkdf<SHA256>(outputbuff, sizeof(output), secret, sizeof(secret), salt, sizeof(salt), info, sizeof(info));
-
-      peers.insert(it, latestpeer);
+      nvs::saveprefs()->putBytes("peers", nvs::peers.data(), nvs::peers.size() * sizeof(peer));    // persist peers to nvs
+      ws.printf("added peer '%s'\n", nvs::peers.back().name.data());
 
 
       /*  insert new peer in sorted order
@@ -642,11 +649,32 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
 
     {"rm slot", [&](std::string args) {    //  all these conversions feel wrong
-      if (args.empty()) { ws.print("eeee slot requires args\n"); return; }
+      if (args.empty()) { ws.print("eeee what slot to rm \n"); return; }
 
-      uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots a one indexed
+      uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots aa one indexed
 
       if (!delslot) { ws.printf("eeee '%s' not a slot \n", args.c_str()); return; }    //  prevent zero slot since this does not exist
+      if (delslot > nvs::slots) { ws.printf("eeee slot '%u' out of range\n", delslot); return; }    //  slot out of range cant delete this is invalid
+
+      // perhaps simplify this and just always remove top slot
+      nvs::saveprefs()->remove( args );    //  remove top most slot
+      nvs::saveprefs()->putUInt("slots", --nvs::slots);    //  adjust / save slots count
+
+
+      char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
+      char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
+
+      if (delslot != slots) {    //  swap slot with top most slot
+        uint8_t temp[15000];
+        nvs::saveprefs()->getBytes( slotschar , temp, sizeof(temp) );    //  read top most slot into temp
+        nvs::saveprefs()->putBytes( delslotchar , temp, sizeof(temp) );    //  copy temp to target slot
+      }
+
+      nvs::saveprefs()->remove( slotschar );    //  remove top most slot
+      slots--;
+      nvs::saveprefs()->putUInt("slots", slots);    //  adjust / save slots count
+
+      return delslot;    //  echo deleted slot to confirm
 
       if (nvs::deleteslot(delslot)) ws.printf("deleted slot '%u'\n", delslot);
       else  ws.printf("eeee slot '%u' out of range\n", delslot);
@@ -657,6 +685,18 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
     {"rm -peer", [&](std::string args) {    //  all these conversions feel wrong
       // todo implement this make sure map lookup supports spaces!!!!
+      if (args.empty()) { ws.print("eeee what peer to rm \n"); return; }
+
+      uint32_t i = nvs::findpeer(args.c_str());
+
+      if (!i) { ws.printf("eeee peer '%s' not found \n", args.c_str()); return; }
+
+      nvs::peers.erase(nvs::peers.begin() + i);
+      nvs::peers.shrink_to_fit();    //  free unused memory technically not necessary perhaps even bad for fragmentation
+      nvs::saveprefs()->putBytes("peers", nvs::peers.data(), nvs::peers.size() * sizeof(peer)) == nvs::peers.size() * sizeof(peer);
+
+      ws.printf("deleted peer '%s'\n", args.c_str());
+      return;
     }},
 
 
