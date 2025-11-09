@@ -105,6 +105,8 @@
 //
 // ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
 //
+//  TODO MAKE THIS A MERMAID DIAGRAMM !!!! 
+//
 // various message structurs 
 //  - full profile message     -> (profilehash) +  lastwill  + profile
 //  - short profile message    -> (profilehash) +  lastwill  +   /
@@ -153,7 +155,7 @@
 //     - if sender online then this is a profile change -> do not answer  (you already answered to ping befor otherwise sender would not be online so just accept the profile change)
 //     - if full profile message -> potentially overwrite profile of sender, update profilehash of sender
 //     - if short profile message -> confirm profilehash or raise protocoll profile error, on error send short profile message privatly
-//     - if sender online -> confirm lastwill or raise protocoll lastwill error
+//     - if sender online -> confirm lastwill or raise protocoll lastwill error, catch gracefully and overwrite lastwill
 //     - if sender offline -> remember lastwill of sender
 //     - set sender to online
 //  -> for a ping response or sync to catch error (a private message) (full or short profile message)
@@ -165,7 +167,7 @@
 //  -> for a latest foto (a private message) (foto message)
 //     - do not answer
 //     - confirm profilehash or raise protocoll profile error, on error send short profile message privatly
-//     - confirm lastwill or raise protocoll lastwill error, on error send short profile message privatly
+//     - confirm lastwill or raise protocoll lastwill error, catch gracefully and overwrite lastwill
 //     - show foto
 //  -> for a sync message
 //     -  send full profile message privatly
