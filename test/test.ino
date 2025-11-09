@@ -97,21 +97,28 @@
 //
 // ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
 //
+// public secrect -> every peer knows this -> this is for messages to every peer eg profile changes or going offline
+// private secret -> only me and one peer knows this -> this is to send a foto to one peer.
+//
+// perhaps do not use last will instead use sth like a heart beat with public secret to tell peers you are alive
+//
+//
 // on connect
-//  -> ask all peers for their profiles by simply sending own profile encrypted to each peer
-//  -> remember who answered alias remember online peers
+//  -> generate random last will and register this as last will (append this to every message from now on)
+//  -> ask all peers for their profiles by simply sending own profile encrypted with public secret and append last will to this
+//  -> remember who answered alias remember online peers (peers only answer if they see you going form offline to online)
 //
 // on profile change
 //  -> compute hash with sha2 256 https://github.com/espressif/arduino-esp32/blob/master/libraries/Hash/examples/SHA2/SHA2.ino
-//  -> push profile to online peers
-//  -> clean disconnect and reconnect with new profile hash as last will
-//  -> also do not sync again for this reconnect
-//
+//  (-> push profile to online peers (this is not necessary right? since we do a reconnect anyway where the new profile gets sent to all peers))
+//  (-> clean disconnect and reconnect with new profile hash preencrypted with public secret as last will)
+//  -> also do (not) sync again for this reconnect
+// 
 // on ungracefull disconnect alias last will
-//  -> send goodbye message to all online peers perhaps send own profilehash in cleartext since every peer online peer knows this without having to decrypt
+//  -> send last will message to all online peers (perhaps send own profilehash encrypted with public key (in cleartext) since every online peer knows this (without having to decrypt))
 //
-// on recieve of known profilehash in cleartext determinated via length
-//  -> compare hash to stored profilehashes and mark this peer as offline if found
+// on recieve of known lastwill message (profilehash (in cleartext)) (determinated via length)
+//  -> (compare hash to stored profilehashes and) mark this peer as offline if found
 //
 // on peer add
 //  -> send own profile encrypted with new peers secret same as on connect but just to one peer
@@ -119,7 +126,7 @@
 // on recieve successfull decrypt
 //  -> set this peer to online
 //  -> for "you there" this is a ping, answer with own profile encrypted with this peers secret and add "sure sure", do hash check and potentially overwrite old profile
-//  -> for "sure sure" this is a ping response, do not answer sender does not expect an answer, do hash check and potentially overwrite old profile 
+//  -> for "sure sure" this is a ping response, do not answer sender does not expect an answer, do hash check and potentially overwrite old profile
 //  -> for "me pretty" this is a profile change, do not answer, do hash check and potentially overwrite old profile and save hash
 //  -> for "look here" this is a latest foto and should be shown, do not answer, no hash check required
 //
@@ -246,12 +253,12 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       peers.resize(pb / sizeof(peer));    //  resize vector to hold all peers
       saveprefs()->getBytes("peers", peers.data(), pb);    //  load all peers from nvs
     }
-    else {    //  or initialize peers with default value at index 0
+    else {    //  or initialize peers with default value at index zero
       peer localpeer{};
-      localpeer.name = "local";
+      strcpy(localpeer.name.data(), "local");
       localpeer.hkdf.fill(0);    //  empty secret
       localpeer.profilehash.fill(0);    //  empty profile hash
-      localpeer.offline = false;    //  online by default
+      localpeer.alive = 0;    //  offline by default
       appendpeer(localpeer);
     }
   }
@@ -555,7 +562,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
   const std::unordered_map<std::string, std::function<void(std::string args)> > cmds = {    //  const map with compile time initialization to reduce heap pressure/fragmentation
     {"add peer", [&](std::string args) {    //  with just peername this deletes peer and all associated data with aditional secret this adds/overwrites peer hkdf
       if (args.empty()) { ws.print("eeee peer requires args\n"); return; }
-      if (strtoul(args.c_str(), NULL, 10)) { ws.print("eeee numbers not allowed\n"); return; }    //  prevent peer names which are numbers since these are reserved for slots
+      if (args == "0" || strtoul(args.c_str(), NULL, 10)) { ws.print("eeee numbers not allowed\n"); return; }    //  prevent peer names which are numbers since these are reserved for slots
 
       std::string name = args.substr(0, args.find(' '));    //  this always is just the peer name either pos 0..7 or pos 0..nospc
       std::string secret = args.substr(name.length() + 1);    //  this is the secret either pos 8..nospc or empty
@@ -573,7 +580,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       nvs::peers.push_back(latestpeer);
 
       nvs::saveprefs()->putBytes("peers", nvs::peers.data(), nvs::peers.size() * sizeof(peer));    // persist peers to nvs
-      ws.printf("added peer '%s'\n", nvs::peers.back().name.data());
+      ws.printf("okok added peer '%s'\n", nvs::peers.back().name.data());
 
 
       /*  insert new peer in sorted order
@@ -630,8 +637,19 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
     }},
 
     {"fw auto", [&](std::string args){    // TODO pass hardcoded link here to nvs
-      nvs::saveprefs()->putBytes("airlink", args.c_str(), args.length());
-      ws.printf("set firmware url to '%s'\n", args.c_str());
+      if (args.empty()) {    // TODO perhaps use switch case here
+        ws.print("eeee auto update requires a link or off\n");
+        return;
+      }
+      if (args == "off") { 
+        nvs::saveprefs()->remove("airlink");
+        ws.print("okok auto update is off\n");
+        return;
+      }
+      if (args ) {
+        nvs::saveprefs()->putBytes("airlink", args.c_str(), args.length());
+        ws.printf("okok set firmware url to '%s'\n", args.c_str());
+      }
     }},
 
     {"fw off", [&](std::string args){    // TODO this deactivates auto update
@@ -641,14 +659,19 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
 
     {"rm -rf", [&](std::string args){    // todo add 'rm -rf' to clear nvs prefs.clear();
-      if (args != "-rf") { ws.print("eeee rm requires args '-rf'\n"); return; }
+      if (args != "-y") { ws.print("eeee rm requires args '-y'\n"); return; }
       //nvs::prefs.clear();
       nvs::saveprefs()->clear();
       ws.print("cleared nvs \n");
     }},
 
 
-    {"rm slot", [&](std::string args) {    //  all these conversions feel wrong
+    {"rm slot", [&](std::string args) {    //  just decrement slots so top slot may be overwritten
+      nvs::saveprefs()->putUInt("slots", --nvs::slots);    //  decrement plus save slots count
+      ws.printf("okok '%u' slots left\n", nvs::slots);
+      return;
+    
+      /*  this would be nicer but right now scope reduction is prio
       if (args.empty()) { ws.print("eeee what slot to rm \n"); return; }
 
       uint32_t delslot = strtoul(args.c_str(), NULL, 10);    //  this returns zero value for invalid input this is acceptable since zero slot does not exist slots aa one indexed
@@ -662,7 +685,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
 
 
       char slotschar[12]; snprintf(slotschar, 12, "%u", slots);    //  hold the delslot/slots value as char this is required for nvs access
-      char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);
+      char delslotchar[12]; snprintf(delslotchar, 12, "%u", delslot);    //  all these conversions feel wrong
 
       if (delslot != slots) {    //  swap slot with top most slot
         uint8_t temp[15000];
@@ -680,6 +703,7 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       else  ws.printf("eeee slot '%u' out of range\n", delslot);
       
       return;
+      */
     }},
 
 
@@ -898,6 +922,15 @@ void wstas(void *parameter) {    //  this spawns webserial and handles all web s
       if ( !strcmp(slot, "profile") ) {    //  either save to local profile or to slot number
         //nvs::prefs.putBytes("localprofile", &rcvbuff, sizeof(rcvbuff));    //  write profile to nvs at 'profile' position
         nvs::saveprefs()->putBytes("localprofile", &rcvbuff, sizeof(rcvbuff));    //  write profile to nvs at 'profile' position
+
+        // TODO implement here
+        // on profile change
+        //  -> compute hash with sha2 256 https://github.com/espressif/arduino-esp32/blob/master/libraries/Hash/examples/SHA2/SHA2.ino
+        //  -> push profile to online peers
+        //  -> clean disconnect and reconnect with new profile hash as last will
+        //  -> also do not sync again for this reconnect
+
+
       } 
       else  {
         nvs::appendslot(slot, rcvbuff);    //  write foto to nvs at slot position alias &rcvbuff[0]
