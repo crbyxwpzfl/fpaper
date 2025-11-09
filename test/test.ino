@@ -76,11 +76,12 @@
 //
 // ------------ obvious vulnerabilities ------------
 //
-// - 1. replay/dos by publishing profilehashes wich then cause peers to register the true owner of this profilehash as offline
+// - (1.) replay/dos by publishing profilehashes wich then cause peers to register the true owner of this profilehash as offline
 //   this is so cheap and is so impactful this has to be fixed
 //   - perhaps add on receive of ownprofilehash in cleartext do full disconnect/reconnect cycle to reassert online status but this than allowes for dos amplification
 //   - perhaps add on receive of ownprofilehash in cleartext show warning screen and do nothing else and let user manually reconnect
 //   - perhaps allow manual granular reconnect via webserial command
+//   -> some what solved - last will is randomly generated on connect and never shared unecrypted - still a bad peer could put you offline since last will can not be unique to one peer
 //
 // - 2. dos by flooding topic with garbage
 //   perhaps add a rate limit on processing messages and throw dos warning on screen
@@ -88,63 +89,101 @@
 //
 // - 3. replay old messages are not detected and are just accepted
 //   add timestamp to messages and drop old messages
+//   add little ring buffer to hold last few ivs and ignore these
 //
 // - 4. session hijack/takeover potentially suppresses last will message of true session owner or dublicates last will message when hijacker disconnects
 //   causes other peers to send messages to a peer who is offline uneccessary traffic
 //   this is not easy to fix and relies on mqtt broker configuration
 //   best mitigation is to use a strong unique client id see above
 //
+// - 5. structured traffic reveals private info
+//   message followed by lots of messages -> this likely is a pulic message, someone goes online, followups count reveals friend count
+//   short to long message as followups -> reveals something about activeness of peers
+//   long message and no following message -> could be a foto (private message) or a profile change (public message)
+//   perhaps one can infere important members or even map out a relationship graph of the network
+//   buffer all messages to same length can help a bit but causes lots of traffic especially on connect
 //
 // ------------- THIS SEEMS TO BE A WORKABLE SOLUTION -------------
 //
-// public secrect -> every peer knows this -> this is for messages to every peer eg profile changes or going offline
-// private secret -> only me and one peer knows this -> this is to send a foto to one peer.
+// various message structurs 
+//  - full profile message     -> (profilehash) +  lastwill  + profile
+//  - short profile message    -> (profilehash) +  lastwill  +   /
+//  - foto message             -> (profilehash) + (lastwill) + foto
+//  - lastwill message         ->        /      +  lastwill  +   /
+// (profilehash not stritly necessary but appending this relieves on message callback form also hashing profiles befor check)
+// (including profile hash in every message allowes for detecting protocoll errors or violations)
 //
-// perhaps do not use last will instead use sth like a heart beat with public secret to tell peers you are alive
+// messages encryption convetion
+//  - private messages -> encrypted with private secret -> only me and one peer knows this -> this is to send a foto to one peer
+//  - public messages -> encrypted with prublic secret -> every peer knows this -> this is for messages to every peer eg profile changes or going offline
+//
+// flags
+//  - woosh -> this peer missed a profile change
+//  - offline -> well this peer is offline
+//  - online -> well this peer is online
+//
+// protocoll erros
+//  - profile error -> a recieved profile hash did not match with stored profile -> catch by asking this peer for his profile
+//  - lastwill error -> a recieved lastwill did not match with stored lastwill -> gracefully overwrite lastwill
 //
 //
 // on connect
-//  -> generate random last will and register this as last will (append this to every message from now on)
-//  -> ask all peers for their profiles by simply sending own profile encrypted with public secret and append last will to this
-//  -> remember who answered alias remember online peers (peers only answer if they see you going form offline to online)
+//  -> generate random last will and register this as last will
+//  -> if any woosh flag -> ping all peers via full profile message publicly (online peers will answer with full or short profile message depending on wether you was wooshed)
+//  -> if no woosh flag -> ping all peers via short profile message publicly  (online peers will answer with full or short profile message depending on wether you was wooshed)
 //
 // on profile change
-//  -> compute hash with sha2 256 https://github.com/espressif/arduino-esp32/blob/master/libraries/Hash/examples/SHA2/SHA2.ino
-//  (-> push profile to online peers (this is not necessary right? since we do a reconnect anyway where the new profile gets sent to all peers))
-//  (-> clean disconnect and reconnect with new profile hash preencrypted with public secret as last will)
-//  -> also do (not) sync again for this reconnect
+//  -> compute hash with sha2 256 https://github.com/espressif/arduino-esp32/blob/master/libraries/Hash/examples/SHA2/SHA2.ino of new profile
+//  -> publish this with a full profile message publicly
+//  -> remember the offline peers who missed this by setting the woosh flags of these peers
 // 
 // on ungracefull disconnect alias last will
-//  -> send last will message to all online peers (perhaps send own profilehash encrypted with public key (in cleartext) since every online peer knows this (without having to decrypt))
+//  -> server sends last will message to all online peers
 //
-// on recieve of known lastwill message (profilehash (in cleartext)) (determinated via length)
-//  -> (compare hash to stored profilehashes and) mark this peer as offline if found
+// on recieve of known lastwill message (determinated via length)
+//  -> mark this peer as offline if found
 //
 // on peer add
-//  -> send own profile encrypted with new peers secret same as on connect but just to one peer
+//  -> send full profile message encrypted with new peers secret just to one peer
 //
-// on recieve successfull decrypt
-//  -> set this peer to online
-//  -> for "you there" this is a ping, answer with own profile encrypted with this peers secret and add "sure sure", do hash check and potentially overwrite old profile
-//  -> for "sure sure" this is a ping response, do not answer sender does not expect an answer, do hash check and potentially overwrite old profile
-//  -> for "me pretty" this is a profile change, do not answer, do hash check and potentially overwrite old profile and save hash
-//  -> for "look here" this is a latest foto and should be shown, do not answer, no hash check required
+// on recieve plus successfull decrypt
+//  -> for a ping (a public message) (full or short profile message)
+//     - if sender offline and sender wooshed -> answer with full profile message privately  (sender missed a profile change and tell him you are online)
+//     - if sender offline and sender not wooshed -> anser with short profile message privately  (sender already has current profile just tell him you are online)
+//     - if sender online then this is a profile change -> do not answer  (you already answered to ping befor otherwise sender would not be online so just accept the profile change)
+//     - if full profile message -> potentially overwrite profile of sender, update profilehash of sender
+//     - if short profile message -> confirm profilehash or raise protocoll profile error, on error send short profile message privatly
+//     - if sender online -> confirm lastwill or raise protocoll lastwill error
+//     - if sender offline -> remember lastwill of sender
+//     - set sender to online
+//  -> for a ping response or sync to catch error (a private message) (full or short profile message)
+//     - if full profile message and sender offline -> do not answer, potentially overwrite profile of sender, update profilehash of sender
+//     - if short profile message and sender online -> answer with full profile message privatly
+//     - if short profile message -> confirm profilehash or raise protocoll profile error, on error send short profile message privatly
+//     - remember lastwill of sender
+//     - set sender to online
+//  -> for a latest foto (a private message) (foto message)
+//     - do not answer
+//     - confirm profilehash or raise protocoll profile error, on error send short profile message privatly
+//     - confirm lastwill or raise protocoll lastwill error, on error send short profile message privatly
+//     - show foto
+//  -> for a sync message
+//     -  send full profile message privatly
 //
 //
 // issues
-//  - curretnly A onconnect 1. message (ping) -> B on receive 2. message (answer to ping) -> A on receive 3. message (miss interpretation as ping) -> B has a as online so done
-//    third message is redundant here since A already knows B is online by receiving the second message
-//    differentiate between inital ping and ping answer e.g. append "you there" to inital ping, "sure sure" to ping answer, "look here" to lates foto, "me pretty" to profile changes
-//    or more minimal just append "?" to inital ping and "!" to ping answer and profile changes, "" nothing to latest foto
-//    so only answer with profile+! when message was profile+?
-//    either way always include this appendix in message cypher and make all messages the same length to avoid leaking info whts beeing sent
+//  - messages have different length this leaks info about what is sent
+//    foto and full profile message or short profile messages can be differentiated
+//    this leaks wehere a handshake happens (someone pings) and where actual data is sent
 //  - perhaps makes public who knows how many peers
 //  - lots of messages on connect
 //  - tracks online status of peers
+//  - rlies on broker implementation of lastwill
 //
 // pros
+//  - messages have different length this minimizes traffic
 //  - dont send unnecessary messages after initial sync
-//  - tracks online status of peers
+//  - tracks online status of peers relieves network preassure
 //
 // ------------------------------------------------------------------
 //
@@ -254,12 +293,20 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
       saveprefs()->getBytes("peers", peers.data(), pb);    //  load all peers from nvs
     }
     else {    //  or initialize peers with default value at index zero
+
+      // TODO if now peer first require user to setup himself !!!!
+      
       peer localpeer{};
-      strcpy(localpeer.name.data(), "local");
-      localpeer.hkdf.fill(0);    //  empty secret
+      strcpy(localpeer.name.data(), "local");    //  this is you TODO set this to something unique
       localpeer.profilehash.fill(0);    //  empty profile hash
+      //localpeer.hkdf.fill(0);    //  empty secret
+      localpeer.public.fill(0);    //  TODO derive this from name
+      localpeer.private.fill(0);
+      localpeer.lastwill.fill(0);
       localpeer.alive = 0;    //  offline by default
-      appendpeer(localpeer);
+      peers.push_back(localpeer);
+      
+      //appendpeer(localpeer);
     }
   }
 
@@ -307,9 +354,12 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
   */
 
   struct peer {    //  remember nvs byte blobs max length is 508kb see here https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/storage/nvs_flash.html
-    std::array<char,8> name;    //  nul-terminated so 7chars 
-    std::array<uint8_t,32> hkdf;    //  secret this is for en-/decryption of mqtt messages
+    std::array<char,8> name;    //  nul-terminated so 7chars
+    std::array<uint8_t,32> public;    //  secret for messages to all peers this is derived of the name
+    //std::array<uint8_t,32> hkdf;    //  secret this is for en-/decryption of mqtt messages
+    std::array<uint8_t,32> private;    //  secret for messages to this peer this is derived once with peer add
     std::array<uint8_t,8> profilehash;    //  short sha to quickly check for profile changes
+    std::array<uint8_t,8> lastwill;    //  this is the lastwill of this peer to detect disconects
     uint8_t alive;    //  track status of peers dont send unnecessary messages to unresponsive peers
   };
 
@@ -409,6 +459,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
     return it == peers.end() ? 0 : static_cast<uint32_t>(std::distance(peers.begin(), it));    //  cast avoids warnings
   }
 
+  /*
   static uint32_t deleteslot(uint32_t delslot) {    //  this deletes a slot and writes this count into nvs
     if (delslot > slots) return 0;    //  slot out of range cant delete this is invalid
     
@@ -430,6 +481,7 @@ class nvs {    //  this is mostly transparent and adds a cache for frequently ac
 
     return delslot;    //  echo deleted slot to confirm
   }
+  */
 
   static uint32_t appendslot(const char* slotchar, uint8_t* foto) {    //  this overwrites or adds a foto to nvs and writes corrected count to nvs
     uint32_t slotint = strtoul(slotchar, NULL, 10);
